@@ -88,8 +88,8 @@ def _fit_labels(matrix: np.ndarray, algorithm: str, k: int, seed: int) -> tuple[
             )
         model = SpectralClustering(
             n_clusters=k,
-            affinity="nearest_neighbors",
-            n_neighbors=int(min(10, len(matrix) - 1)),
+            affinity="rbf",
+            gamma=1.0 / matrix.shape[1],
             assign_labels="kmeans",
             n_init=10,
             random_state=seed,

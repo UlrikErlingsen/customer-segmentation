@@ -1063,7 +1063,7 @@ def methods_page() -> None:
         ("K-means", "Fast and transparent for compact groups in scaled numeric space. It gives each customer one segment membership and can miss irregular or overlapping structures."),
         ("Gaussian mixture", "For numeric-only bases, allows overlapping elliptical groups and produces membership probabilities. It is omitted for categorical or binary bases and needs ample observations per dimension."),
         ("Ward hierarchy", "Builds a nested grouping by minimizing added within-group variance. It is useful for smaller datasets and cannot directly assign future customers."),
-        ("Spectral (flexible shapes)", f"Connects each customer to its nearest neighbors and groups those who stay connected, which can capture stretched or curved patterns the other methods split. It is limited to {SPECTRAL_ROW_LIMIT:,} customers and cannot directly assign future customers."),
+        ("Spectral (flexible shapes)", f"Scores how similar every pair of customers is and groups customers who stay strongly connected, which can capture stretched or curved patterns the other methods split. It is limited to {SPECTRAL_ROW_LIMIT:,} customers and cannot directly assign future customers."),
     ]
     method_columns = st.columns(2)
     for index, (card_title, card_body) in enumerate(method_cards):
