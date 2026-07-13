@@ -6,7 +6,7 @@ Security fixes are applied to the latest release on the `main` branch.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a suspected vulnerability involving code execution, file handling, dependency compromise, or disclosure of customer data. Use GitHub’s private vulnerability reporting feature for this repository. Include the affected version, reproduction steps, impact, and any suggested mitigation.
+Please do not open a public issue for a suspected vulnerability involving code execution, file handling, dependency compromise, or disclosure of customer data. Email [code.modular578@passmail.net](mailto:code.modular578@passmail.net) with the subject `[SegmentSignal security]`. If GitHub private vulnerability reporting is enabled for the public repository, you may instead use its [private security advisory form](https://github.com/UlrikErlingsen/customer-segmentation/security/advisories/new). Include the affected version, reproduction steps, impact, and any suggested mitigation.
 
 ## Scope and operating advice
 
