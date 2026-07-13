@@ -4,6 +4,7 @@ if not exist .venv (
   py -3 -m venv .venv
 )
 call .venv\Scripts\activate.bat
+if not defined ARROW_DEFAULT_MEMORY_POOL set ARROW_DEFAULT_MEMORY_POOL=system
 for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash requirements.txt -Algorithm SHA256).Hash.ToLower()"') do set REQ_HASH=%%H
 if not exist .venv\.segmentsignal-requirements-%REQ_HASH% (
   echo First launch: downloading packages. Later launches will be faster.

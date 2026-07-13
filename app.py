@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import os
+
+# pyarrow's bundled mimalloc allocator can segfault on macOS when Streamlit
+# serializes tables from a worker thread; the system allocator is stable.
+# Must be set before Arrow creates its default memory pool.
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 import base64
 import hashlib
 import inspect
 import json
-import os
 import platform
 import sys
 import traceback

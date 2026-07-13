@@ -35,6 +35,9 @@ fi
 
 source .venv/bin/activate
 
+# pyarrow's bundled mimalloc allocator can segfault on macOS; use the system allocator.
+export ARROW_DEFAULT_MEMORY_POOL="${ARROW_DEFAULT_MEMORY_POOL:-system}"
+
 REQUIREMENTS_HASH="$(/usr/bin/shasum -a 256 requirements.txt | /usr/bin/awk '{print $1}')"
 READY_FILE=".venv/.segmentsignal-requirements-${REQUIREMENTS_HASH}"
 if [ ! -f "$READY_FILE" ]; then

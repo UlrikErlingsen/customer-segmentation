@@ -2,6 +2,10 @@
 
 All notable changes to SegmentSignal are documented here.
 
+## 0.2.1 - 2026-07-13
+
+- Fixed a crash on macOS where the app died with a "connection error" popup while showing tables (a segmentation fault inside pyarrow's bundled memory allocator). Arrow now uses the system allocator, set in the app and in every launcher.
+
 ## 0.2.0 - 2026-07-13
 
 - Added graph-based spectral clustering (up to 2,500 customers) as a fourth method for stretched or curved group shapes.
