@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="SegmentSignal - find the groups worth understanding">
+  <rect width="1200" height="300" rx="32" fill="#F8F5ED"/>
+  <circle cx="1090" cy="-15" r="190" fill="#83D2B4" opacity=".18"/>
+  <circle cx="1130" cy="285" r="145" fill="#F2C66D" opacity=".18"/>
+  <g transform="translate(75 72) scale(1.22)">
+    <rect width="128" height="128" rx="30" fill="#173C3A"/>
+    <path d="M31 40C45 26 61 30 68 43M68 43C76 55 91 55 99 43M32 86C45 99 62 96 69 83M69 83C77 70 92 71 99 84" fill="none" stroke="#83D2B4" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="29" cy="39" r="11" fill="#F2C66D"/><circle cx="69" cy="44" r="13" fill="#F8F5ED"/><circle cx="101" cy="41" r="9" fill="#D95B40"/>
+    <circle cx="30" cy="88" r="9" fill="#D95B40"/><circle cx="70" cy="82" r="12" fill="#F8F5ED"/><circle cx="101" cy="87" r="11" fill="#F2C66D"/>
+  </g>
+  <text x="275" y="132" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="800" fill="#17322E" letter-spacing="-3">Segment<tspan fill="#D95B40">Signal</tspan></text>
+  <text x="280" y="185" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#47645E">Find the groups worth understanding.</text>
+  <text x="280" y="224" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#6B7F7A" letter-spacing="2">LOCAL-FIRST  ·  EXPLAINABLE  ·  OPEN SOURCE</text>
+</svg>
+

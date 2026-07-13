@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use SegmentSignal in research or teaching, please cite this software."
+title: "SegmentSignal: Open Customer Segmentation"
+type: software
+authors:
+  - family-names: Erlingsen
+    given-names: Ulrik
+version: 0.1.0
+date-released: 2026-07-13
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/UlrikErlingsen/customer-segmentation"
+

@@ -1,0 +1,15 @@
+.git
+.github
+.DS_Store
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+build
+dist
+*.egg-info
+.streamlit/secrets.toml
+tests
+

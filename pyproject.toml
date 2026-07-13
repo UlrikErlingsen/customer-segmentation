@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "customer-segmentation"
+version = "0.1.0"
+description = "SegmentSignal: open, local-first B2C customer segmentation for marketers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Ulrik Erlingsen" }]
+keywords = ["customer segmentation", "market segmentation", "clustering", "marketing analytics", "streamlit"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business",
+]
+dependencies = [
+  "numpy>=1.24,<3",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.0,<3",
+  "plotly>=5.18,<7",
+  "scikit-learn>=1.3,<2",
+  "scipy>=1.10,<2",
+  "streamlit>=1.38,<2",
+  "xlrd>=2.0,<3",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.urls]
+Homepage = "https://github.com/UlrikErlingsen/customer-segmentation"
+Documentation = "https://github.com/UlrikErlingsen/customer-segmentation/blob/main/docs/data_guide.md"
+Issues = "https://github.com/UlrikErlingsen/customer-segmentation/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
