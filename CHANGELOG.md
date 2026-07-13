@@ -2,6 +2,11 @@
 
 All notable changes to SegmentSignal are documented here.
 
+## 1.0.0 - 2026-07-14
+
+- First stable release. No functional changes since 0.3.0; the version now
+  signals that the workflow, methods, exports, and file formats are stable.
+
 ## 0.3.0 - 2026-07-13
 
 - Page 2 gained hierarchy views for files up to 5,000 customers: split boxes (icicle) showing the customer base dividing into smaller groups, and a truncated dendrogram — the classic hierarchical-clustering visuals.
