@@ -38,6 +38,14 @@ Agglomerative Ward clustering starts with one customer per cluster and repeatedl
 
 Spectral clustering builds a customer-to-customer similarity matrix with a Gaussian (RBF) kernel, \(\exp(-\gamma \lVert x_i - x_j \rVert^2)\) with \(\gamma = 1/p\) for \(p\) prepared columns, then partitions the similarity graph using the leading eigenvectors of its normalized graph Laplacian, followed by a k-means step on the embedded coordinates. Because it groups customers by similarity structure rather than by distance to a centroid, it can recover connected but non-spherical patterns — stretched, curved, or ring-like — that centroid methods split. SegmentSignal uses a fixed seed and 10 k-means restarts on the embedding, and limits the method to 2,500 customers because the dense similarity matrix and eigendecomposition grow quadratically. Spectral solutions provide no likelihood and no centroids for assigning future customers; membership confidence uses the same centroid-based approximation as K-means and Ward, which is a coarser fit for irregular shapes and should be read as orientation only.
 
+### Hierarchy views (icicle and dendrogram)
+
+For files up to 5,000 customers, the app computes a Ward linkage on the prepared matrix and shows the top of the merge tree in two classic forms: split boxes (an icicle chart, the whole base dividing into progressively smaller groups down to eight) and a truncated dendrogram (the last 25 merges, with collapsed group sizes in parentheses). These are the same views classic statistics packages print for hierarchical clustering. They support judgment about a plausible segment count; they are not a test, and the displayed hierarchy is Ward's — other methods in the comparison may group customers differently.
+
+### Descriptive ANOVA and center distances
+
+For the chosen solution, the app reports a one-way ANOVA per numeric basis variable (F, degrees of freedom, p-value, and eta squared) and the Euclidean distances between segment centers in prepared space. Because the clusters were constructed to maximize exactly these differences, the F statistics and p-values are descriptive rather than inferential — the same caveat classic SPSS cluster output prints. Eta squared is useful as a relative ranking of which variables separate the segments most.
+
 ## Diagnostics
 
 ### Silhouette

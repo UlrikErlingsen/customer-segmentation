@@ -6,7 +6,7 @@ import pandas as pd
 from segmentsignal.io import load_data, results_to_excel
 from segmentsignal.modeling import fit_solution
 from segmentsignal.preprocessing import PreprocessConfig, prepare_features
-from segmentsignal.profiling import build_segment_map, profile_segments
+from segmentsignal.profiling import anova_table, build_segment_map, profile_segments
 
 
 ROOT = Path(__file__).parents[1]
@@ -86,3 +86,36 @@ def test_mixed_basis_card_can_surface_numeric_and_categorical_traits():
     second = profiles.cards.loc[profiles.cards["segment"] == "Segment 2", "suggested_name"].iloc[0]
     assert "Higher attitude score" in second
     assert "preferred format: Detailed" in second
+
+
+def test_anova_table_ranks_separating_variables_descriptively():
+    rng = np.random.default_rng(21)
+    frame = pd.DataFrame(
+        {
+            "separates": np.concatenate([rng.normal(0, 1, 60), rng.normal(8, 1, 60)]),
+            "noise": rng.normal(0, 1, 120),
+        }
+    )
+    labels = np.array(["Segment 1"] * 60 + ["Segment 2"] * 60)
+    table = anova_table(frame, labels, ["separates", "noise"])
+    assert list(table.columns) == ["variable", "F", "df_between", "df_within", "p_value", "eta_squared"]
+    assert table.iloc[0]["variable"] == "separates"
+    assert table.iloc[0]["F"] > table.iloc[1]["F"]
+    assert table.iloc[0]["p_value"] < 0.001
+    assert 0.9 < table.iloc[0]["eta_squared"] <= 1.0
+    assert int(table.iloc[0]["df_between"]) == 1
+    assert int(table.iloc[0]["df_within"]) == 118
+
+
+def test_anova_table_handles_missing_and_constant_columns():
+    frame = pd.DataFrame(
+        {
+            "constant": np.ones(40),
+            "with_gaps": np.concatenate([np.full(20, 1.0), np.full(18, 5.0), [np.nan, np.nan]]),
+        }
+    )
+    labels = np.array(["Segment 1"] * 20 + ["Segment 2"] * 20)
+    table = anova_table(frame, labels, ["constant", "with_gaps", "not_a_column"])
+    assert "not_a_column" not in table["variable"].tolist()
+    gaps = table[table["variable"] == "with_gaps"].iloc[0]
+    assert int(gaps["df_within"]) == 36

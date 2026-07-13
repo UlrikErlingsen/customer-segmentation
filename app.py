@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import sklearn
 import streamlit as st
 
@@ -29,9 +30,16 @@ from segmentsignal import __version__
 from segmentsignal.errors import DataProblem, friendly_message
 from segmentsignal.features import build_rfm
 from segmentsignal.io import LoadedData, load_data, results_to_excel, results_to_json, safe_for_spreadsheet
-from segmentsignal.modeling import ALGORITHM_LABELS, SPECTRAL_ROW_LIMIT, compare_solutions, fit_solution
+from segmentsignal.modeling import (
+    ALGORITHM_LABELS,
+    SPECTRAL_ROW_LIMIT,
+    centroid_distances,
+    compare_solutions,
+    fit_solution,
+    hierarchy_views,
+)
 from segmentsignal.preprocessing import PreprocessConfig, infer_feature_types, prepare_features
-from segmentsignal.profiling import build_segment_map, profile_segments
+from segmentsignal.profiling import anova_table, build_segment_map, profile_segments
 from segmentsignal.validation import (
     data_quality_report,
     likely_id_columns,
@@ -161,6 +169,7 @@ def set_loaded(loaded: LoadedData, grain: str | None = None) -> None:
     for key in (
         "setup", "prepared", "comparison", "solution", "comparison_signature",
         "comparison_settings", "comparison_seed", "chosen_diagnostics",
+        "hierarchy_views", "hierarchy_views_key",
     ):
         st.session_state.pop(key, None)
 
@@ -271,6 +280,7 @@ with st.sidebar:
             "tables", "source_name", "active_table", "upload_fingerprint", "upload_identity", "_uploader_had_file",
             "grain_hint", "setup", "prepared", "comparison", "solution", "comparison_signature",
             "comparison_settings", "comparison_seed", "chosen_diagnostics",
+            "hierarchy_views", "hierarchy_views_key",
         ):
             st.session_state.pop(key, None)
         st.session_state["upload_epoch"] = int(st.session_state.get("upload_epoch", 0)) + 1
@@ -707,6 +717,57 @@ def compare_page() -> None:
     chart.update_layout(height=390, legend_title_text="", hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10))
     full_width(st.plotly_chart, chart)
 
+    if len(frame) <= 5000:
+        with st.expander("How the customer base splits — hierarchy views"):
+            st.caption(
+                "These views use Ward hierarchical clustering on the same prepared variables. "
+                "They help you sense-check a segment count; they do not prove one is correct."
+            )
+            views_key = st.session_state.get("comparison_signature")
+            if st.session_state.get("hierarchy_views_key") != views_key:
+                try:
+                    with st.spinner("Building the customer hierarchy…"):
+                        st.session_state["hierarchy_views"] = hierarchy_views(prepared.matrix, max_segments=8)
+                    st.session_state["hierarchy_views_key"] = views_key
+                except Exception as exc:
+                    show_error(exc)
+            views = st.session_state.get("hierarchy_views")
+            if views is not None and st.session_state.get("hierarchy_views_key") == views_key:
+                st.markdown("**Split boxes (icicle):** the top box is every customer; each level shows one group dividing in two.")
+                icicle_chart = go.Figure(
+                    go.Icicle(
+                        ids=views.icicle["id"],
+                        labels=views.icicle["label"],
+                        parents=views.icicle["parent"],
+                        values=views.icicle["customers"],
+                        branchvalues="total",
+                        tiling=dict(orientation="v"),
+                        hovertemplate="%{label}<br>%{percentRoot:.0%} of all customers<extra></extra>",
+                    )
+                )
+                icicle_chart.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+                full_width(st.plotly_chart, icicle_chart)
+                st.caption(
+                    "Deep splits that produce tiny boxes are a warning sign: statistically neat microsegments "
+                    "are rarely usable in a campaign."
+                )
+                st.markdown("**Merge tree (dendrogram):** groups joined by a low bridge are similar; a tall gap before two groups join suggests genuinely distinct segments.")
+                tree = go.Figure()
+                for xs, ys in zip(views.dendrogram["icoord"], views.dendrogram["dcoord"]):
+                    tree.add_trace(
+                        go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#17322e", width=1.4), hoverinfo="skip", showlegend=False)
+                    )
+                leaf_positions = [5 + 10 * index for index in range(len(views.dendrogram["leaf_labels"]))]
+                tree.update_layout(
+                    height=420,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(tickvals=leaf_positions, ticktext=views.dendrogram["leaf_labels"], title="Customer groups — (n) = collapsed customers"),
+                    yaxis=dict(title="Merge distance (Ward)"),
+                )
+                full_width(st.plotly_chart, tree)
+    else:
+        st.caption("Hierarchy views (split boxes and dendrogram) are available for files up to 5,000 customers.")
+
     options = [f"{row.method} · {int(row.segments)} segments" for row in diagnostics.itertuples()]
     chosen = st.selectbox("Candidate to carry forward", options)
     chosen_row = diagnostics.iloc[options.index(chosen)]
@@ -912,7 +973,7 @@ def profiles_page() -> None:
                         for note in notes:
                             st.write(note)
 
-    tabs = st.tabs(["Numeric profiles", "Categorical profiles", "Membership uncertainty", "Explore two variables"])
+    tabs = st.tabs(["Numeric profiles", "Categorical profiles", "Membership uncertainty", "Explore two variables", "Expert statistics"])
     with tabs[0]:
         if profile.numeric.empty:
             st.info("No numeric basis or descriptor variables were selected.")
@@ -976,6 +1037,43 @@ def profiles_page() -> None:
                 "Each box covers the middle half of that segment’s customers, the line inside is the typical (median) "
                 "customer, and the dots are unusual values. Overlapping boxes mean the segments are not very different "
                 "on that variable."
+            )
+    with tabs[4]:
+        st.caption(
+            "Statistics in the style of classic SPSS cluster output, for readers who want the numbers behind the profiles."
+        )
+        numeric_basis_columns = [
+            column for column in setup["basis"]
+            if column in frame.columns and pd.api.types.is_numeric_dtype(frame[column])
+        ]
+        if numeric_basis_columns:
+            st.markdown("**Variable differences across segments — one-way ANOVA**")
+            anova = anova_table(frame, solution.segment_labels, numeric_basis_columns)
+            if anova.empty:
+                st.info("The ANOVA table could not be computed for these variables.")
+            else:
+                full_width(
+                    st.dataframe,
+                    anova.style.format({"F": "{:.1f}", "p_value": "{:.4f}", "eta_squared": "{:.3f}"}),
+                    hide_index=True,
+                )
+                st.caption(
+                    "**Read with care:** the segments were constructed to maximize exactly these differences, so the "
+                    "F tests and p-values are descriptive, not hypothesis tests (SPSS prints the same warning). "
+                    "Eta squared (0–1) shows how much of a variable’s variation the segmentation explains — use it to "
+                    "rank which variables separate the groups most."
+                )
+        else:
+            st.info("ANOVA needs at least one numeric basis variable.")
+        prepared_state = st.session_state.get("prepared")
+        if prepared_state is not None:
+            st.markdown("**Distances between final segment centers**")
+            distances = centroid_distances(prepared_state.matrix, solution.segment_labels)
+            distances = distances.rename(index=names, columns=names)
+            full_width(st.dataframe, distances)
+            st.caption(
+                "Euclidean distances in the standardized model space. Larger numbers mean more different segment "
+                "centers; the nearest pair shows where segments blur into each other."
             )
 
     st.subheader("Export the evidence and customer-to-segment map")

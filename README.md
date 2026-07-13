@@ -131,7 +131,7 @@ Remove names and contact details, use pseudonymous IDs, minimize variables, and 
 
 The product name is **SegmentSignal**; the repository keeps the clear `customer-segmentation` name. It is a visual sibling to WorthSignal and is intended to fit a future portfolio of open customer-analytics tools.
 
-This app was built with AI assistance and reviewed against established market-segmentation and cluster-validation methods. All example customer records are synthetic. Course materials informed the workflow, but no licensed course pages, cases, figures, or slide assets are included.
+This app was built with AI assistance and reviewed against established market-segmentation and cluster-validation methods. All example customer records are synthetic. The workflow follows the published segmentation and cluster-validation literature cited in [docs/methods.md](docs/methods.md); no licensed third-party materials are included.
 
 Contributions are welcome—see [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 

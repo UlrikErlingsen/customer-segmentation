@@ -6,8 +6,51 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import stats as _scipy_stats
 
 from .preprocessing import infer_feature_types
+
+
+def anova_table(frame: pd.DataFrame, segment_labels: np.ndarray, numeric_columns: list[str]) -> pd.DataFrame:
+    """One-way ANOVA of each numeric basis variable across segments (SPSS-style).
+
+    Because the segments were built to maximize exactly these differences,
+    the F statistics and p-values are descriptive only — they rank which
+    variables separate the groups most, and are not hypothesis tests.
+    """
+    labels = pd.Series(np.asarray(segment_labels).astype(str), index=frame.index)
+    rows: list[dict[str, object]] = []
+    for column in numeric_columns:
+        if column not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        valid = values.notna()
+        groups = [
+            values[valid & (labels == segment)]
+            for segment in sorted(labels.unique(), key=lambda name: (len(name), name))
+        ]
+        groups = [group for group in groups if len(group) >= 2]
+        if len(groups) < 2:
+            continue
+        included = pd.concat(groups)
+        grand_mean = float(included.mean())
+        ss_between = float(sum(len(group) * (float(group.mean()) - grand_mean) ** 2 for group in groups))
+        ss_total = float(((included - grand_mean) ** 2).sum())
+        f_statistic, p_value = _scipy_stats.f_oneway(*groups)
+        rows.append(
+            {
+                "variable": column,
+                "F": float(f_statistic),
+                "df_between": len(groups) - 1,
+                "df_within": int(len(included) - len(groups)),
+                "p_value": float(p_value),
+                "eta_squared": float(ss_between / ss_total) if ss_total > 0 else np.nan,
+            }
+        )
+    table = pd.DataFrame(rows, columns=["variable", "F", "df_between", "df_within", "p_value", "eta_squared"])
+    if not table.empty:
+        table = table.sort_values("F", ascending=False).reset_index(drop=True)
+    return table
 
 
 @dataclass

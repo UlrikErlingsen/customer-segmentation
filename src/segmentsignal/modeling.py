@@ -7,6 +7,8 @@ from math import log
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import dendrogram as _scipy_dendrogram
+from scipy.cluster.hierarchy import linkage as _scipy_linkage
 from sklearn.cluster import AgglomerativeClustering, KMeans, SpectralClustering
 from sklearn.decomposition import PCA
 from sklearn.metrics import (
@@ -37,6 +39,15 @@ class ComparisonResult:
     diagnostics: pd.DataFrame
     labels: dict[tuple[str, int], np.ndarray]
     failures: pd.DataFrame
+
+
+@dataclass
+class HierarchyViews:
+    """Nested Ward splits for an icicle chart plus truncated dendrogram coordinates."""
+
+    icicle: pd.DataFrame
+    dendrogram: dict
+    max_segments: int
 
 
 @dataclass
@@ -295,6 +306,62 @@ def compare_solutions(
         labels=label_cache,
         failures=pd.DataFrame(failure_rows, columns=["method", "segments", "reason"]),
     )
+
+
+def hierarchy_views(matrix: np.ndarray, max_segments: int = 8, dendrogram_leaves: int = 25) -> HierarchyViews:
+    """Build Ward-hierarchy views: nested split boxes (icicle) and a truncated dendrogram.
+
+    The icicle frame contains one row per node of the truncated merge tree —
+    the whole base at the top, splitting in two at every level until
+    ``max_segments`` groups remain.
+    """
+    matrix = np.asarray(matrix, dtype=float)
+    n = len(matrix)
+    if n > 5000:
+        raise DataProblem("Hierarchy views are limited to 5,000 customers, like Ward clustering itself.")
+    if n < 4:
+        raise DataProblem("At least 4 customers are required to draw a hierarchy.")
+    max_segments = int(min(max_segments, n - 1))
+    merge_table = _scipy_linkage(matrix, method="ward")
+
+    def _count(cluster_id: float) -> int:
+        cluster = int(cluster_id)
+        return 1 if cluster < n else int(merge_table[cluster - n, 3])
+
+    window_start = (n - 1) - (max_segments - 1)
+    rows: list[dict[str, object]] = [{"id": str(2 * n - 2), "parent": "", "customers": n}]
+    for merge_index in range(n - 2, window_start - 1, -1):
+        node_id = str(n + merge_index)
+        for child in (merge_table[merge_index, 0], merge_table[merge_index, 1]):
+            rows.append({"id": str(int(child)), "parent": node_id, "customers": _count(child)})
+    icicle = pd.DataFrame(rows)
+    icicle["share_%"] = 100 * icicle["customers"] / n
+    icicle["label"] = icicle.apply(
+        lambda row: f"{int(row['customers']):,} customers · {row['share_%']:.0f}%", axis=1
+    )
+
+    tree = _scipy_dendrogram(
+        merge_table, truncate_mode="lastp", p=int(min(dendrogram_leaves, n)), no_plot=True
+    )
+    return HierarchyViews(
+        icicle=icicle,
+        dendrogram={
+            "icoord": tree["icoord"],
+            "dcoord": tree["dcoord"],
+            "leaf_labels": tree["ivl"],
+        },
+        max_segments=max_segments,
+    )
+
+
+def centroid_distances(matrix: np.ndarray, labels: np.ndarray) -> pd.DataFrame:
+    """Pairwise Euclidean distances between segment centers in prepared space."""
+    matrix = np.asarray(matrix, dtype=float)
+    labels = np.asarray(labels)
+    unique = sorted({str(label) for label in labels}, key=lambda name: (len(name), name))
+    centroids = np.vstack([matrix[labels.astype(str) == label].mean(axis=0) for label in unique])
+    distances = np.linalg.norm(centroids[:, None, :] - centroids[None, :, :], axis=2)
+    return pd.DataFrame(np.round(distances, 3), index=unique, columns=unique)
 
 
 def _membership_confidence(matrix: np.ndarray, labels: np.ndarray, model: object, algorithm: str) -> np.ndarray:

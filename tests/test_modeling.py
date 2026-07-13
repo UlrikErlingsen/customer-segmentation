@@ -7,7 +7,7 @@ from sklearn.exceptions import ConvergenceWarning
 
 from segmentsignal.errors import DataProblem
 from segmentsignal.io import load_data
-from segmentsignal.modeling import compare_solutions, fit_solution
+from segmentsignal.modeling import centroid_distances, compare_solutions, fit_solution, hierarchy_views
 from segmentsignal.preprocessing import PreprocessConfig, prepare_features
 
 
@@ -93,6 +93,38 @@ def test_comparison_can_include_spectral_candidates():
     assert (result.diagnostics["method"] == "Spectral (flexible shapes)").any()
     spectral_row = result.diagnostics[result.diagnostics["method"] == "Spectral (flexible shapes)"].iloc[0]
     assert spectral_row["silhouette"] > 0.8
+
+
+def test_hierarchy_views_produce_consistent_nested_counts():
+    rng = np.random.default_rng(11)
+    matrix = np.vstack([rng.normal(-3, 0.3, (50, 3)), rng.normal(0, 0.3, (50, 3)), rng.normal(3, 0.3, (50, 3))])
+    views = hierarchy_views(matrix, max_segments=5, dendrogram_leaves=10)
+    icicle = views.icicle
+    assert len(icicle) == 1 + 2 * (views.max_segments - 1)
+    root = icicle[icicle["parent"] == ""]
+    assert len(root) == 1 and int(root.iloc[0]["customers"]) == len(matrix)
+    for parent_id in icicle[icicle["id"].isin(icicle["parent"])]["id"]:
+        children = icicle[icicle["parent"] == parent_id]
+        parent_count = int(icicle[icicle["id"] == parent_id].iloc[0]["customers"])
+        assert int(children["customers"].sum()) == parent_count
+    assert len(views.dendrogram["icoord"]) > 0
+    assert len(views.dendrogram["leaf_labels"]) == 10
+
+
+def test_hierarchy_views_enforce_the_row_limit():
+    with pytest.raises(DataProblem, match="5,000"):
+        hierarchy_views(np.zeros((5001, 2)))
+
+
+def test_centroid_distances_are_symmetric_with_zero_diagonal():
+    rng = np.random.default_rng(12)
+    matrix = np.vstack([rng.normal(-3, 0.2, (40, 2)), rng.normal(3, 0.2, (40, 2))])
+    labels = np.array(["Segment 1"] * 40 + ["Segment 2"] * 40)
+    distances = centroid_distances(matrix, labels)
+    assert list(distances.index) == ["Segment 1", "Segment 2"]
+    assert distances.iloc[0, 0] == 0 and distances.iloc[1, 1] == 0
+    assert distances.iloc[0, 1] == distances.iloc[1, 0]
+    assert distances.iloc[0, 1] > 5
 
 
 def test_underdetermined_full_gmm_is_reported_as_failure():
