@@ -117,7 +117,7 @@ python -m pytest
 
 SegmentSignal is designed first for B2C markets, where there are usually enough individual customers for quantitative grouping and macro-targeting. Smaller B2B customer bases often require account-specific research, buying-center roles, firmographic context, and qualitative judgment that generic clustering cannot replace.
 
-This project does not duplicate [WorthSignal](https://github.com/UlrikErlingsen/customer-value-analytics). WorthSignal covers customer value, RFM targeting, CLV, retention, and marketing ROI. SegmentSignal focuses on multi-variable segment discovery, validation, profiling, and export. Regression predicts an outcome; clustering forms groups. They are different jobs.
+This project does not duplicate its siblings. [WorthSignal](https://github.com/UlrikErlingsen/customer-value-analytics) covers customer value, RFM targeting, CLV, retention, and marketing ROI; [ChoiceSignal](https://github.com/UlrikErlingsen/conjoint-analysis) covers conjoint analysis — what customers value in a product. SegmentSignal focuses on multi-variable segment discovery, validation, profiling, and export. Regression predicts an outcome; clustering forms groups; conjoint measures preferences. They are different jobs.
 
 The recommended product architecture is to keep both analytical engines separate and later add a small shared **CustomerSignal Hub** that launches or links to them. Shared branding and carefully extracted upload/UI components can live in a small common package; the statistical modules should not be merged into one large `app.py`.
 
