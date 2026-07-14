@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "customer-segmentation"
-version = "1.1.0"
+version = "1.1.1"
 description = "SegmentSignal: open, local-first B2C customer segmentation for marketers"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -36,7 +36,18 @@ def anova_table(frame: pd.DataFrame, segment_labels: np.ndarray, numeric_columns
         grand_mean = float(included.mean())
         ss_between = float(sum(len(group) * (float(group.mean()) - grand_mean) ** 2 for group in groups))
         ss_total = float(((included - grand_mean) ** 2).sum())
-        f_statistic, p_value = _scipy_stats.f_oneway(*groups)
+        ss_within = max(ss_total - ss_between, 0.0)
+        df_between = len(groups) - 1
+        df_within = int(len(included) - len(groups))
+        if ss_total <= 0 or df_within <= 0:
+            # A constant variable has no variance to explain: F is undefined.
+            f_statistic, p_value = float("nan"), float("nan")
+        elif ss_within <= 1e-12:
+            # Perfect between-group separation with zero within-group variance.
+            f_statistic, p_value = float("inf"), 0.0
+        else:
+            f_statistic = (ss_between / df_between) / (ss_within / df_within)
+            p_value = float(_scipy_stats.f.sf(f_statistic, df_between, df_within))
         rows.append(
             {
                 "variable": column,

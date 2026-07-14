@@ -2,6 +2,10 @@
 
 All notable changes to SegmentSignal are documented here.
 
+## 1.1.1 - 2026-07-14
+
+- The expert-statistics ANOVA now computes F directly from the sums of squares, handling constant and perfectly separated variables without scipy warnings (F = NaN and F = ∞ respectively).
+
 ## 1.1.0 - 2026-07-14
 
 - Standardization of numeric bases can now be turned off for data that already shares one scale.
