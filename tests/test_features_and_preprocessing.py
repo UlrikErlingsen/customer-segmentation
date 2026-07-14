@@ -92,3 +92,19 @@ def test_categorical_block_collapsed_by_rare_grouping_fails_clearly():
     frame = pd.DataFrame({"unique_category": [f"value_{index}" for index in range(40)]})
     with pytest.raises(DataProblem, match="no usable variation"):
         prepare_features(frame, PreprocessConfig((), ("unique_category",)))
+
+
+def test_standardization_can_be_disabled_for_shared_scale_data():
+    import numpy as np
+    import pandas as pd
+
+    from segmentsignal.preprocessing import PreprocessConfig, prepare_features
+
+    frame = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0, 5.0] * 10, "b": [0.5, 0.4, 0.3, 0.2, 0.1] * 10})
+    standardized = prepare_features(frame, PreprocessConfig(("a", "b"), clip_outliers=False, log_skewed=False))
+    assert np.allclose(standardized.matrix.mean(axis=0), 0, atol=1e-9)
+    raw = prepare_features(
+        frame, PreprocessConfig(("a", "b"), clip_outliers=False, log_skewed=False, standardize=False)
+    )
+    assert np.allclose(raw.matrix[:, 0], frame["a"])
+    assert raw.audit["standardize"] is False

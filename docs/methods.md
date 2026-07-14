@@ -4,7 +4,7 @@ SegmentSignal implements a traditional, direct segmentation workflow: define the
 
 ## Preparation
 
-Let customer \(i\) have numeric basis value \(x_{ij}\) on variable \(j\). Missing numeric values use the sample median. If enabled, values are winsorized to the observed 1st and 99th percentiles. A non-negative column with sample skewness greater than 1 receives \(\log(1+x)\). Each remaining numeric column is standardized:
+Let customer \(i\) have numeric basis value \(x_{ij}\) on variable \(j\). Missing numeric values use the sample median. If enabled, values are winsorized to the observed 1st and 99th percentiles. A non-negative column with sample skewness greater than 1 receives \(\log(1+x)\). By default each remaining numeric column is standardized (standardization can be disabled when all bases already share one meaningful scale, such as conjoint part-worths):
 
 \[
 z_{ij} = \frac{x_{ij}-\bar{x}_j}{s_j}.

@@ -471,12 +471,26 @@ def data_page() -> None:
                     + examples
                     + ("…" if len(high_pairs) > 4 else ".")
                 )
+        looks_like_partworths = any(" · " in column for column in columns) and "r_squared" in columns
+        if looks_like_partworths:
+            st.info(
+                "This file looks like a **ChoiceSignal part-worth export** (one row per respondent, one column per "
+                "feature level). Use the part-worth columns as bases, keep `r_squared` as a descriptor, and consider "
+                "turning off standardization under Preparation choices — part-worths already share one scale, and "
+                "standardizing would erase which attributes matter most."
+            )
         advanced = st.expander("Preparation choices")
         with advanced:
             clip_outliers = st.toggle("Limit numeric values at the 1st and 99th percentiles", value=True)
             log_skewed = st.toggle("Log-transform strongly right-skewed, non-negative variables", value=True)
+            standardize = st.toggle(
+                "Standardize numeric bases (recommended)",
+                value=not looks_like_partworths,
+                help="Keep this on for ordinary data so no variable dominates just because of its unit. Turn it off "
+                "only when all bases already share one meaningful scale, such as conjoint part-worths.",
+            )
             categorical_weight = st.slider("Categorical basis weight", 0.25, 2.0, 1.0, 0.25)
-            st.caption("Numeric missing values use the median. Categorical missing values become “Missing”. All numeric bases are standardized.")
+            st.caption("Numeric missing values use the median. Categorical missing values become “Missing”.")
         if st.button("Save this analysis setup", type="primary"):
             try:
                 validate_customer_table(frame, id_column, basis_columns)
@@ -486,6 +500,7 @@ def data_page() -> None:
                     categorical_columns=tuple(categorical),
                     clip_outliers=clip_outliers,
                     log_skewed=log_skewed,
+                    standardize=standardize,
                     categorical_weight=categorical_weight,
                 )
                 st.session_state["setup"] = {
@@ -1078,7 +1093,9 @@ def profiles_page() -> None:
 
     st.subheader("Export the evidence and customer-to-segment map")
     st.caption(
-        "The map records which segment the chosen model placed each customer in. It is not a list of marketing tasks or actions."
+        "The map records which segment the chosen model placed each customer in. It is not a list of marketing tasks "
+        "or actions. **Tip:** join the segment column onto your transaction history and open it in **WorthSignal** "
+        "(our customer-value sibling) to compare each segment’s value, retention, and CLV."
     )
     segment_map = build_segment_map(frame, setup["id_column"], solution.segment_labels, solution.confidence, names)
     numeric_export = profile.numeric.copy()
@@ -1161,7 +1178,7 @@ def methods_page() -> None:
     st.subheader("The workflow follows segmentation practice, not just clustering software")
     st.write(
         "First define the decision, then distinguish segmentation bases from descriptors. Bases form groups; descriptors help profile and reach them. "
-        "The app standardizes numeric scales, can tame extreme values and strong skew, one-hot encodes categorical bases, compares several methods, and profiles the selected solution in the original units."
+        "The app standardizes numeric scales by default (optional for data already on one shared scale), can tame extreme values and strong skew, one-hot encodes categorical bases, compares several methods, and profiles the selected solution in the original units."
     )
     method_cards = [
         ("K-means", "Fast and transparent for compact groups in scaled numeric space. It gives each customer one segment membership and can miss irregular or overlapping structures."),

@@ -2,6 +2,12 @@
 
 All notable changes to SegmentSignal are documented here.
 
+## 1.1.0 - 2026-07-14
+
+- Standardization of numeric bases can now be turned off for data that already shares one scale.
+- ChoiceSignal part-worth exports are recognized on upload, with guidance and standardization off by default.
+- The export page points to WorthSignal for per-segment value, retention, and CLV analysis.
+
 ## 1.0.0 - 2026-07-14
 
 - First stable release. No functional changes since 0.3.0; the version now

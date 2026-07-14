@@ -20,6 +20,7 @@ class PreprocessConfig:
     categorical_columns: tuple[str, ...] = ()
     clip_outliers: bool = True
     log_skewed: bool = True
+    standardize: bool = True
     categorical_weight: float = 1.0
     max_categories: int = 20
 
@@ -129,12 +130,15 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
                         logged.append(column)
             if logged:
                 audit["log1p_columns"] = logged
-            scaler = StandardScaler()
-            values = scaler.fit_transform(values)
-            audit["scaler"] = {
-                column: {"mean": float(mean), "scale": float(scale)}
-                for column, mean, scale in zip(numeric_names, scaler.mean_, scaler.scale_)
-            }
+            if config.standardize:
+                scaler = StandardScaler()
+                values = scaler.fit_transform(values)
+                audit["scaler"] = {
+                    column: {"mean": float(mean), "scale": float(scale)}
+                    for column, mean, scale in zip(numeric_names, scaler.mean_, scaler.scale_)
+                }
+            else:
+                audit["scaler"] = "disabled — numeric bases kept on their original shared scale"
             parts.append(values)
             feature_names.extend(numeric_names)
 
@@ -201,6 +205,7 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
     audit["categorical_columns"] = list(config.categorical_columns)
     audit["clip_outliers"] = config.clip_outliers
     audit["log_skewed"] = config.log_skewed
+    audit["standardize"] = config.standardize
     audit["categorical_weight"] = config.categorical_weight
     audit["max_categories"] = config.max_categories
     audit["feature_names"] = feature_names
