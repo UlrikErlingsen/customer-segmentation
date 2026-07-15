@@ -59,6 +59,10 @@ docker run --rm -p 8501:8501 segmentsignal
 
 Then open `http://localhost:8501`.
 
+## No install? Give this file to an AI
+
+Don't want to install anything? [AI_ANALYST.md](AI_ANALYST.md) is a single copy-paste file that turns a capable AI assistant (Claude, ChatGPT, Gemini, …) into this analysis. Copy the file into a chat, add your data, and the AI follows the same published methods and honesty rules as the app. The app is still the more private option: local mode keeps your data on your computer, while a cloud AI sees whatever you paste.
+
 ## Try it in two minutes
 
 1. Start the app and click **Demo · behavior table** in the sidebar.
