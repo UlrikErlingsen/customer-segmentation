@@ -117,11 +117,13 @@ Run the independent statistical and app tests with:
 python -m pytest
 ```
 
-## B2C focus and relationship to WorthSignal
+## Relationship to the Signal suite
 
 SegmentSignal is designed first for B2C markets, where there are usually enough individual customers for quantitative grouping and macro-targeting. Smaller B2B customer bases often require account-specific research, buying-center roles, firmographic context, and qualitative judgment that generic clustering cannot replace.
 
 This project does not duplicate its siblings. [WorthSignal](https://github.com/UlrikErlingsen/customer-value-analytics) covers customer value, RFM targeting, CLV, retention, and marketing ROI; [ChoiceSignal](https://github.com/UlrikErlingsen/conjoint-analysis) covers conjoint analysis — what customers value in a product. [AdoptSignal](https://github.com/UlrikErlingsen/adoption-forecasting) forecasts when a new product gets adopted. [PositionSignal](https://github.com/UlrikErlingsen/brand-positioning) maps how brands are perceived against competitors. [DriverSignal](https://github.com/UlrikErlingsen/survey-driver-analysis) finds which survey factors drive satisfaction. [AllocSignal](https://github.com/UlrikErlingsen/marketing-mix-allocation) turns response assumptions into a budget allocation. [GateSignal](https://github.com/UlrikErlingsen/launch-decision-gate) structures the go/hold/rework/kill investment decision. [ExperimentSignal](https://github.com/UlrikErlingsen/experiment-analysis) tests whether a randomized treatment caused a meaningful change. [MeasureSignal](https://github.com/UlrikErlingsen/measurement-validation) checks whether a multi-item score behaves like a defensible measure. [TextSignal](https://github.com/UlrikErlingsen/open-text-analysis) finds stable language patterns in open-ended answers. SegmentSignal focuses on multi-variable segment discovery, validation, profiling, and export. Regression predicts an outcome; clustering forms groups; conjoint measures preferences. They are different jobs.
+
+The private pricing-evidence prototype bounds pricing evidence, while [RecommendSignal](https://github.com/UlrikErlingsen/recommender-evaluation) compares recommendation policies under temporal holdouts. Neither replaces segment discovery. See the maintained suite overview at [ulrikerlingsen.com](https://ulrikerlingsen.com); labels that have not passed their own publication screen remain outside the public catalog.
 
 The recommended product architecture is to keep both analytical engines separate and later add a small shared **CustomerSignal Hub** that launches or links to them. Shared branding and carefully extracted upload/UI components can live in a small common package; the statistical modules should not be merged into one large `app.py`.
 

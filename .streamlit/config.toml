@@ -1,4 +1,5 @@
 [theme]
+base = "light"
 primaryColor = "#D95B40"
 backgroundColor = "#F8F5ED"
 secondaryBackgroundColor = "#EEF2EC"
@@ -8,6 +9,7 @@ font = "sans serif"
 [server]
 maxUploadSize = 200
 headless = true
+fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false

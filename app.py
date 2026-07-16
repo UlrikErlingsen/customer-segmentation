@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import os
@@ -525,7 +527,11 @@ def data_page() -> None:
         order_default = next((i for i, column in enumerate(order_options) if "order" in column.lower() and "id" in column.lower()), 0)
         order_selected = st.selectbox("Order ID (optional)", order_options, index=order_default)
         parsed_dates = pd.to_datetime(frame[date_column], errors="coerce")
-        suggested_reference = (parsed_dates.max() + pd.Timedelta(days=1)).date() if parsed_dates.notna().any() else pd.Timestamp.today().date()
+        suggested_reference = (
+            (pd.Timestamp(parsed_dates.max()) + pd.Timedelta(1, unit="D")).date()
+            if parsed_dates.notna().any()
+            else pd.Timestamp.today().date()
+        )
         reference_date = st.date_input("Analysis reference date", value=suggested_reference)
         rfm_feature_options = [
             "recency_days", "frequency", "monetary_value", "average_order_value", "customer_tenure_days"
@@ -1232,6 +1238,7 @@ else:
     methods_page()
 
 st.markdown(
-    f"<div class='ss-footer'>SegmentSignal v{__version__} <span>•</span> Built for transparent B2C segmentation <span>•</span> Your uploaded file is not persisted by the app</div>",
+    f"<div class='ss-footer'>SegmentSignal v{__version__} <span>◆</span> Patterns, not discovered truth "
+    "<span>◆</span> Part of the Signal suite <span>◆</span> AGPL-3.0-or-later</div>",
     unsafe_allow_html=True,
 )
