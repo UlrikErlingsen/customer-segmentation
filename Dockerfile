@@ -9,7 +9,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN useradd --create-home --uid 10001 segmentsignal && chown -R segmentsignal:segmentsignal /app
+# App code stays root-owned and read-only; the runtime user only writes to its own home.
+RUN useradd --create-home --uid 10001 segmentsignal
 USER segmentsignal
 
 EXPOSE 8501

@@ -148,18 +148,18 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
 
 
 def safe_for_spreadsheet(frame: pd.DataFrame) -> pd.DataFrame:
-    """Neutralize string values that spreadsheet programs could interpret as formulas."""
+    """Neutralize strings (cell values and column headers) that spreadsheet programs could interpret as formulas."""
     safe = frame.copy()
+
+    def neutralize(value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        cleaned = ILLEGAL_XML_CHARACTERS.sub("", value)
+        return "'" + cleaned if cleaned.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")) else cleaned
+
+    safe.columns = _unique_column_names([neutralize(str(column)) for column in safe.columns])
     for column in safe.columns:
         series = safe[column].astype(object) if isinstance(safe[column].dtype, pd.CategoricalDtype) else safe[column]
-        def neutralize(value: object) -> object:
-            if isinstance(value, str):
-                cleaned = ILLEGAL_XML_CHARACTERS.sub("", value)
-                if cleaned.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
-                    return "'" + cleaned
-                return cleaned
-            return value
-
         safe[column] = series.map(neutralize)
     return safe
 
@@ -167,9 +167,17 @@ def safe_for_spreadsheet(frame: pd.DataFrame) -> pd.DataFrame:
 def results_to_excel(tables: dict[str, pd.DataFrame]) -> bytes:
     """Create an in-memory workbook with readable column widths."""
     output = BytesIO()
+    used_names: set[str] = set()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for raw_name, frame in tables.items():
-            sheet_name = str(raw_name)[:31] or "Results"
+            base = re.sub(r"[\\/*?:\[\]]", "-", str(raw_name))[:31] or "Results"
+            sheet_name = base
+            suffix = 2
+            while sheet_name in used_names:
+                tail = f"_{suffix}"
+                sheet_name = base[: 31 - len(tail)] + tail
+                suffix += 1
+            used_names.add(sheet_name)
             safe = safe_for_spreadsheet(frame)
             safe.to_excel(writer, sheet_name=sheet_name, index=False)
             sheet = writer.sheets[sheet_name]

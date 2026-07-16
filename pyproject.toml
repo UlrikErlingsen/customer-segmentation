@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "customer-segmentation"
-version = "1.1.1"
+version = "1.1.2"
 description = "SegmentSignal: open, local-first B2C customer segmentation for marketers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,7 @@ classifiers = [
   "Topic :: Office/Business",
 ]
 dependencies = [
+  "defusedxml>=0.7,<1",
   "numpy>=1.24,<3",
   "openpyxl>=3.1,<4",
   "pandas>=2.0,<3",

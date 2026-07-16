@@ -2,6 +2,13 @@
 
 All notable changes to SegmentSignal are documented here.
 
+## 1.1.2 - 2026-07-16
+
+### Security
+
+- Excel exports now neutralize formula-like column headers (not only cell values) and scrub and de-duplicate sheet names.
+- The Docker image keeps application code root-owned and read-only, and defusedxml hardens workbook XML parsing.
+
 ## 1.1.1 - 2026-07-14
 
 - The expert-statistics ANOVA now computes F directly from the sums of squares, handling constant and perfectly separated variables without scipy warnings (F = NaN and F = ∞ respectively).
