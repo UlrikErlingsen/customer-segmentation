@@ -37,7 +37,8 @@ def test_loading_a_demo_navigates_to_page_one_and_keeps_the_radio_in_sync():
     app.run()
     next(button for button in app.sidebar.button if button.label == "Demo · behavior table").click().run()
     assert app.sidebar.radio[0].value == "1 · Data & purpose"
-    assert app.session_state["nav_target"] == "1 · Data & purpose"
+    assert app.session_state["segment:nav_target"] == "1 · Data & purpose"
+    assert app.sidebar.radio[0].key == "segment:page"
     assert any(metric.label == "Rows" and metric.value == "600" for metric in app.metric)
     assert not app.exception, [error.value for error in app.exception]
 
@@ -79,3 +80,15 @@ def test_specific_segment_count_above_eight_is_available():
     exact_counts.set_value([9]).run()
     assert exact_counts.value == [9]
     assert not app.exception, [error.value for error in app.exception]
+
+
+def test_loading_a_second_demo_resets_data_dependent_controls():
+    app = AppTest.from_file(APP, default_timeout=30)
+    app.run()
+    next(button for button in app.sidebar.button if button.label == "Demo · behavior table").click().run()
+    assert any(button.label == "Save this analysis setup" for button in app.button)
+    next(button for button in app.sidebar.button if button.label == "Demo · purchase log").click().run()
+    assert not app.exception, [error.value for error in app.exception]
+    grain = next(radio for radio in app.radio if radio.label == "What does one row represent?")
+    assert grain.value == "Transaction log (many rows per customer)"
+    assert any(button.label == "Build RFM features and save setup" for button in app.button)

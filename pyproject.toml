@@ -25,15 +25,23 @@ dependencies = [
   "numpy>=2.2.6,<3",
   "openpyxl>=3.1.5,<4",
   "pandas>=2.3.3,<3",
-  "plotly>=7.0.0,<8",
   "scikit-learn>=1.7.2,<2",
   "scipy>=1.15.3,<2",
-  "streamlit>=1.62.0,<2",
   "xlrd>=2.0.2,<3",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=9.1.1,<10"]
+ui = [
+  "plotly>=7.0.0,<8",
+  "streamlit>=1.62.0,<2",
+]
+test = [
+  "build>=1.2,<2",
+  "plotly>=7.0.0,<8",
+  "pytest>=9.1.1,<10",
+  "ruff>=0.8,<1",
+  "streamlit>=1.62.0,<2",
+]
 
 [project.urls]
 Homepage = "https://github.com/UlrikErlingsen/customer-segmentation"
@@ -43,8 +51,21 @@ Issues = "https://github.com/UlrikErlingsen/customer-segmentation/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"segmentsignal.ui" = ["assets/marks/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
 
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"app.py" = ["E402"]
