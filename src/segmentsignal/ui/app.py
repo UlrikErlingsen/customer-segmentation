@@ -13,7 +13,6 @@ import json
 import os
 import platform
 import traceback
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -24,6 +23,7 @@ import streamlit as st
 
 from segmentsignal import __version__
 from segmentsignal.errors import DataProblem, friendly_message
+from segmentsignal.examples import demo_csv_bytes
 from segmentsignal.features import build_rfm
 from segmentsignal.io import LoadedData, load_data, results_to_excel, results_to_json, safe_for_spreadsheet
 from segmentsignal.modeling import (
@@ -55,9 +55,6 @@ def k(name: str) -> str:
     """Namespace a session-state or widget key with the app slug, so apps can share one Hub session."""
     return f"{NS}:{name}"
 
-
-ROOT = Path(__file__).resolve().parents[3]
-EXAMPLES = ROOT / "examples"
 
 PAGES = [
     "Welcome",
@@ -142,7 +139,8 @@ def set_loaded(loaded: LoadedData, grain: str | None = None) -> None:
 
 
 def load_demo(filename: str, grain: str) -> None:
-    set_loaded(load_data(EXAMPLES / filename), grain=grain)
+    # Generated in code (identical to examples/), so the demos also work from an installed package.
+    set_loaded(load_data(demo_csv_bytes(filename), name=filename), grain=grain)
 
 
 def current_frame() -> pd.DataFrame | None:

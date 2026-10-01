@@ -3,6 +3,7 @@
 import ast
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -179,3 +180,51 @@ def test_session_state_and_widget_keys_go_through_the_namespace_helper() -> None
     assert all(key.startswith("k(") for key in state_keys), state_keys
     assert all(key.startswith("k(") for key in widget_keys), widget_keys
     assert 'NS = "segment"' in source
+
+
+def test_demo_generators_match_the_committed_example_files() -> None:
+    from segmentsignal.examples import DEMO_FILES, demo_csv_bytes
+
+    for filename in DEMO_FILES:
+        committed = (ROOT / "examples" / filename).read_bytes().replace(b"\r\n", b"\n")
+        assert demo_csv_bytes(filename) == committed, filename
+
+
+def test_ui_reads_no_files_outside_the_package() -> None:
+    # Signal Hub installs the app from its release archive: only src/segmentsignal (and declared package data)
+    # exists there, so nothing reachable from render() may read repo-root folders such as examples/ or docs/.
+    for path in UI.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "parents[" not in source, path.name
+        assert '"examples"' not in source and "'examples'" not in source, path.name
+
+
+def test_render_and_every_demo_work_from_an_installed_copy_of_the_package(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    shutil.copytree(PACKAGE, site / "segmentsignal", ignore=shutil.ignore_patterns("__pycache__"))
+    code = f"""
+import sys
+site = {str(site)!r}
+sys.path.insert(0, site)
+import segmentsignal
+assert segmentsignal.__file__.startswith(site), segmentsignal.__file__
+from streamlit.testing.v1 import AppTest
+
+script = "import sys\\nsys.path.insert(0, " + repr(site) + ")\\nfrom segmentsignal.ui import render\\nrender()\\n"
+for label, rows in (("Demo · behavior table", "600"), ("Demo · purchase log", "4,288"), ("Demo · needs survey", "450")):
+    app = AppTest.from_string(script, default_timeout=120)
+    app.run()
+    assert not app.exception, [error.value for error in app.exception]
+    next(button for button in app.sidebar.button if button.label == label).click().run()
+    assert not app.exception, [error.value for error in app.exception]
+    assert not app.error, [error.value for error in app.error]
+    assert any(metric.label == "Rows" and metric.value == rows for metric in app.metric), label
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
