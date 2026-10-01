@@ -1,6 +1,6 @@
 # Methods and validation
 
-SegmentSignal implements a traditional, direct segmentation workflow: define the strategic purpose; separate segmentation bases from descriptors; prepare the basis matrix; form several candidate solutions; test robustness and parsimony; profile the chosen groups; and leave targeting and profitability as separate managerial decisions.
+Segment Signal implements a traditional, direct segmentation workflow: define the strategic purpose; separate segmentation bases from descriptors; prepare the basis matrix; form several candidate solutions; test robustness and parsimony; profile the chosen groups; and leave targeting and profitability as separate managerial decisions.
 
 ## Preparation
 
@@ -24,11 +24,11 @@ K-means finds \(k\) centroids that minimize within-cluster squared Euclidean dis
 \sum_{g=1}^{k}\sum_{i \in C_g}\lVert z_i-\mu_g\rVert^2.
 \]
 
-SegmentSignal uses k-means++ initialization, 20 starts, a fixed seed, and up to 500 iterations. It is most natural for compact, roughly spherical groups in prepared numeric space.
+Segment Signal uses k-means++ initialization, 20 starts, a fixed seed, and up to 500 iterations. It is most natural for compact, roughly spherical groups in prepared numeric space.
 
 ### Gaussian mixture model
 
-A finite Gaussian mixture estimates \(k\) multivariate normal components with full covariance matrices. It allows elliptical overlap and exposes posterior membership probabilities. SegmentSignal uses five starts, a small covariance regularizer, a fixed seed, and up to 500 iterations. AIC and BIC are exported as method-specific diagnostics but are not mixed into comparisons with non-likelihood algorithms. The UI omits this method when the basis contains categorical fields because an exact one-hot block is singular by construction and does not support a defensible full-Gaussian likelihood interpretation.
+A finite Gaussian mixture estimates \(k\) multivariate normal components with full covariance matrices. It allows elliptical overlap and exposes posterior membership probabilities. Segment Signal uses five starts, a small covariance regularizer, a fixed seed, and up to 500 iterations. AIC and BIC are exported as method-specific diagnostics but are not mixed into comparisons with non-likelihood algorithms. The UI omits this method when the basis contains categorical fields because an exact one-hot block is singular by construction and does not support a defensible full-Gaussian likelihood interpretation.
 
 ### Ward hierarchical clustering
 
@@ -36,7 +36,7 @@ Agglomerative Ward clustering starts with one customer per cluster and repeatedl
 
 ### Spectral clustering
 
-Spectral clustering builds a customer-to-customer similarity matrix with a Gaussian (RBF) kernel, \(\exp(-\gamma \lVert x_i - x_j \rVert^2)\) with \(\gamma = 1/p\) for \(p\) prepared columns, then partitions the similarity graph using the leading eigenvectors of its normalized graph Laplacian, followed by a k-means step on the embedded coordinates. Because it groups customers by similarity structure rather than by distance to a centroid, it can recover connected but non-spherical patterns — stretched, curved, or ring-like — that centroid methods split. SegmentSignal uses a fixed seed and 10 k-means restarts on the embedding, and limits the method to 2,500 customers because the dense similarity matrix and eigendecomposition grow quadratically. Spectral solutions provide no likelihood and no centroids for assigning future customers; membership confidence uses the same centroid-based approximation as K-means and Ward, which is a coarser fit for irregular shapes and should be read as orientation only.
+Spectral clustering builds a customer-to-customer similarity matrix with a Gaussian (RBF) kernel, \(\exp(-\gamma \lVert x_i - x_j \rVert^2)\) with \(\gamma = 1/p\) for \(p\) prepared columns, then partitions the similarity graph using the leading eigenvectors of its normalized graph Laplacian, followed by a k-means step on the embedded coordinates. Because it groups customers by similarity structure rather than by distance to a centroid, it can recover connected but non-spherical patterns — stretched, curved, or ring-like — that centroid methods split. Segment Signal uses a fixed seed and 10 k-means restarts on the embedding, and limits the method to 2,500 customers because the dense similarity matrix and eigendecomposition grow quadratically. Spectral solutions provide no likelihood and no centroids for assigning future customers; membership confidence uses the same centroid-based approximation as K-means and Ward, which is a coarser fit for irregular shapes and should be read as orientation only.
 
 ### Hierarchy views (icicle and dendrogram)
 

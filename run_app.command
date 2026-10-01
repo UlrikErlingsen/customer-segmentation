@@ -12,7 +12,7 @@ if [ -f "$PID_FILE" ] && [ -f "$PORT_FILE" ]; then
   EXISTING_PORT="$(/bin/cat "$PORT_FILE")"
   EXISTING_URL="http://127.0.0.1:${EXISTING_PORT}"
   if /bin/kill -0 "$EXISTING_PID" 2>/dev/null && /usr/bin/curl -fsS "${EXISTING_URL}/_stcore/health" >/dev/null 2>&1; then
-    echo "SegmentSignal is already running. Opening it now."
+    echo "Segment Signal is already running. Opening it now."
     if [ "${SEGMENTSIGNAL_NO_BROWSER:-0}" != "1" ]; then
       /usr/bin/open "$EXISTING_URL"
     fi
@@ -22,14 +22,14 @@ if [ -f "$PID_FILE" ] && [ -f "$PORT_FILE" ]; then
 fi
 
 if ! /usr/bin/env python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-  echo "SegmentSignal needs Python 3.10 or newer."
+  echo "Segment Signal needs Python 3.10 or newer."
   echo "Install it from https://www.python.org/downloads/ and try again."
   read -r -p "Press Return to close..."
   exit 1
 fi
 
 if [ ! -d ".venv" ]; then
-  echo "Creating SegmentSignal's private Python environment..."
+  echo "Creating Segment Signal's private Python environment..."
   /usr/bin/env python3 -m venv .venv
 fi
 
@@ -47,7 +47,7 @@ if [ ! -f "$READY_FILE" ]; then
   /bin/rm -f .venv/.segmentsignal-requirements-* .venv/.segmentsignal-ready
   /usr/bin/touch "$READY_FILE"
 else
-  echo "Using the existing SegmentSignal environment."
+  echo "Using the existing Segment Signal environment."
 fi
 
 if [ -n "${SEGMENTSIGNAL_PORT:-}" ]; then
@@ -75,7 +75,7 @@ fi
 URL="http://127.0.0.1:${PORT}"
 MAX_UPLOAD_MB="${SEGMENTSIGNAL_MAX_UPLOAD_MB:-200}"
 
-echo "Starting SegmentSignal at ${URL}..."
+echo "Starting Segment Signal at ${URL}..."
 python -m streamlit run app.py \
   --server.headless=true \
   --server.address=127.0.0.1 \
@@ -99,7 +99,7 @@ trap cleanup EXIT INT TERM
 ATTEMPT=1
 while [ "$ATTEMPT" -le 120 ]; do
   if /usr/bin/curl -fsS "${URL}/_stcore/health" >/dev/null 2>&1; then
-    echo "SegmentSignal is ready. Opening your browser..."
+    echo "Segment Signal is ready. Opening your browser..."
     if [ "${SEGMENTSIGNAL_NO_BROWSER:-0}" != "1" ]; then
       /usr/bin/open "$URL"
     fi
@@ -107,7 +107,7 @@ while [ "$ATTEMPT" -le 120 ]; do
     exit $?
   fi
   if ! /bin/kill -0 "$APP_PID" 2>/dev/null; then
-    echo "SegmentSignal stopped before it became ready. Review the message above."
+    echo "Segment Signal stopped before it became ready. Review the message above."
     wait "$APP_PID"
     exit $?
   fi
@@ -115,5 +115,5 @@ while [ "$ATTEMPT" -le 120 ]; do
   /bin/sleep 0.25
 done
 
-echo "SegmentSignal took too long to start. Review the message above, then try again."
+echo "Segment Signal took too long to start. Review the message above, then try again."
 exit 1

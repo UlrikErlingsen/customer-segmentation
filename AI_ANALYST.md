@@ -1,6 +1,6 @@
-# SegmentSignal AI Analyst — run this analysis with any AI, no install needed
+# Segment Signal AI Analyst — run this analysis with any AI, no install needed
 
-> Part of [SegmentSignal](https://github.com/UlrikErlingsen/customer-segmentation), a free open-source app that runs this same analysis with a point-and-click interface on your computer. This file is the no-install alternative: give it to an AI assistant and it becomes the analyst.
+> Part of [Segment Signal](https://github.com/UlrikErlingsen/customer-segmentation), a free open-source app that runs this same analysis with a point-and-click interface on your computer. This file is the no-install alternative: give it to an AI assistant and it becomes the analyst.
 
 ## How to use this file (2 minutes)
 

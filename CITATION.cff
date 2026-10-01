@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use SegmentSignal in research or teaching, please cite this software."
-title: "SegmentSignal: Open Customer Segmentation"
+message: "If you use Segment Signal in research or teaching, please cite this software."
+title: "Segment Signal: Open Customer Segmentation"
 type: software
 authors:
   - family-names: Erlingsen

@@ -1,6 +1,6 @@
 # Data guide
 
-SegmentSignal accepts customer-level tables and transaction logs. It never modifies the uploaded file.
+Segment Signal accepts customer-level tables and transaction logs. It never modifies the uploaded file.
 
 ## Customer-level table
 
@@ -31,7 +31,7 @@ Several survey questions may measure the same underlying construct. Including al
 
 ### Outliers
 
-Extreme values may be errors, isolated customers, or early signs of an emerging need. SegmentSignal never silently deletes rows. The default clipping option limits their leverage while preserving every customer. Compare results with and without clipping and investigate consequential cases in the source system.
+Extreme values may be errors, isolated customers, or early signs of an emerging need. Segment Signal never silently deletes rows. The default clipping option limits their leverage while preserving every customer. Compare results with and without clipping and investigate consequential cases in the source system.
 
 ## Transaction log
 

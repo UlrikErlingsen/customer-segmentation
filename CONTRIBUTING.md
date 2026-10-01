@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions that make SegmentSignal clearer, safer, more accurate, or easier for marketers are welcome.
+Contributions that make Segment Signal clearer, safer, more accurate, or easier for marketers are welcome.
 
 ## Development setup
 
