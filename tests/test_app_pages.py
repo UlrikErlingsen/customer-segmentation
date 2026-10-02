@@ -14,12 +14,72 @@ PAGES = [
 ]
 
 
+def _clear_session(app):
+    next(button for button in app.sidebar.button if button.label == "Clear session data").click().run()
+    assert app.session_state["segment:tables"] is None
+
+
 @pytest.mark.parametrize("page", PAGES)
-def test_every_page_renders_without_data(page):
+def test_every_page_renders_with_the_preloaded_demo(page):
     app = AppTest.from_file(APP, default_timeout=30)
     app.run()
     app.sidebar.radio[0].set_value(page).run()
     assert not app.exception, [error.value for error in app.exception]
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_every_page_renders_without_data(page):
+    app = AppTest.from_file(APP, default_timeout=30)
+    app.run()
+    _clear_session(app)
+    app.sidebar.radio[0].set_value(page).run()
+    assert not app.exception, [error.value for error in app.exception]
+
+
+def test_first_run_preloads_the_fictional_behavior_demo():
+    app = AppTest.from_file(APP, default_timeout=30)
+    app.run()
+    assert not app.exception, [error.value for error in app.exception]
+    assert app.sidebar.radio[0].value == "Welcome"
+    assert app.session_state["segment:source_name"] == "demo_customers.csv"
+    assert app.session_state["segment:grain_hint"] == "customer"
+    body = "\n".join(str(item.value) for item in app.markdown)
+    assert "fictional behavior-table demo is already loaded" in body
+    assert any("demo_customers.csv · 600 rows" in str(caption.value) for caption in app.sidebar.caption)
+
+    app.sidebar.radio[0].set_value("1 · Data & purpose").run()
+    assert not app.exception, [error.value for error in app.exception]
+    assert any(metric.label == "Rows" and metric.value == "600" for metric in app.metric)
+    assert any(button.label == "Save this analysis setup" for button in app.button)
+
+
+def test_cleared_session_stays_empty_and_demo_buttons_restore_it():
+    app = AppTest.from_file(APP, default_timeout=30)
+    app.run()
+    _clear_session(app)
+    app.run()
+    assert app.session_state["segment:tables"] is None
+    body = "\n".join(str(item.value) for item in app.markdown)
+    assert "fictional behavior-table demo is already loaded" not in body
+    next(button for button in app.sidebar.button if button.label == "Demo · behavior table").click().run()
+    assert not app.exception, [error.value for error in app.exception]
+    assert any(metric.label == "Rows" and metric.value == "600" for metric in app.metric)
+
+
+def test_upload_replaces_the_preloaded_demo():
+    from segmentsignal.examples import demo_csv_bytes
+
+    app = AppTest.from_file(APP, default_timeout=30)
+    app.run()
+    assert app.session_state["segment:source_name"] == "demo_customers.csv"
+    app.sidebar.file_uploader[0].set_value(("my_customers.csv", demo_csv_bytes("demo_needs_survey.csv"), "text/csv"))
+    app.run()
+    assert not app.exception, [error.value for error in app.exception]
+    assert app.session_state["segment:source_name"] == "my_customers.csv"
+    assert app.sidebar.radio[0].value == "1 · Data & purpose"
+    assert any(metric.label == "Rows" and metric.value == "450" for metric in app.metric)
+    app.run()
+    assert app.session_state["segment:source_name"] == "my_customers.csv"
 
 
 def test_demo_customer_data_reaches_setup_page():

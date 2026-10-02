@@ -47,13 +47,13 @@ Segment Signal is designed first for B2C markets, where there are usually enough
 
 ## Try the demo in three minutes
 
-1. Start the app and click **Demo · behavior table** in the sidebar.
+1. Start the app. The fictional **Behavior table** demo is preloaded, so there is nothing to upload (the sidebar demo buttons restore it or switch to another demo, and uploading your own file replaces it).
 2. Open **1 · Data & purpose**. Review the automatically separated basis variables and descriptors, then save the setup.
 3. Open **2 · Compare solutions**, keep the defaults, and run the comparison.
 4. Carry the leading four-segment solution forward.
 5. Open **3 · Profiles & export** to inspect the map, snake profile, membership uncertainty, names, and downloads, and export the evidence as XLSX, CSV, or JSON.
 
-All demos are fictional. **Behavior table** has one ready-made row per customer. **Purchase log** has repeated orders that are aggregated into optional RFM variables. **Needs survey** contains attitudes, needs, demographics, and no RFM fields, demonstrating that the app is not tied to customer-value data. The demos are generated deterministically by `segmentsignal.examples`, and `scripts/generate_examples.py` writes the identical files to [`examples/`](examples/); they represent no real customer, organisation, course case, or empirical finding.
+All demos are fictional, including the preloaded one. **Behavior table** has one ready-made row per customer. **Purchase log** has repeated orders that are aggregated into optional RFM variables. **Needs survey** contains attitudes, needs, demographics, and no RFM fields, demonstrating that the app is not tied to customer-value data. The demos are generated deterministically by `segmentsignal.examples`, and `scripts/generate_examples.py` writes the identical files to [`examples/`](examples/); they represent no real customer, organisation, course case, or empirical finding.
 
 ## Data contract
 

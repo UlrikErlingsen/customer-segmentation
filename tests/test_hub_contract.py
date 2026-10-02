@@ -123,9 +123,21 @@ def test_render_runs_from_a_script_without_set_page_config() -> None:
     assert f"Segment Signal v{__version__}" in body
 
 
+def test_every_page_with_the_preloaded_demo_has_only_namespaced_widgets() -> None:
+    app = AppTest.from_string(RENDER_SCRIPT, default_timeout=120)
+    app.run()
+    assert app.session_state["segment:source_name"] == "demo_customers.csv"
+    for page in PAGES:
+        app.sidebar.radio[0].set_value(page).run()
+        _assert_namespaced(app)
+        assert app.sidebar.radio[0].value == page
+
+
 def test_every_page_without_data_has_only_namespaced_widgets() -> None:
     app = AppTest.from_string(RENDER_SCRIPT, default_timeout=120)
     app.run()
+    _button(app, "Clear session data", sidebar=True).click().run()
+    assert app.session_state["segment:tables"] is None
     for page in PAGES:
         app.sidebar.radio[0].set_value(page).run()
         _assert_namespaced(app)

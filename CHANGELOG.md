@@ -12,11 +12,13 @@ Signal brand refresh and Signal Hub entry point. The analysis, statistics, data 
 - The app uses the shared `signal_theme` module (Organic Signal design, Customer family colour `#aa5d83`, Figtree): sidebar lockup, masthead, hero, step cards, caution note, footer, per-app Plotly template and the mark as favicon replace the pasted styles. Chart colours come from the theme; the dendrogram ink and the snake-profile zero line use theme tokens.
 - New banner, social preview and marks in `assets/`; the old banner SVG is removed. `.streamlit/config.toml` uses the family colours.
 - README follows the Signal template; bug-report and feature-request issue templates added.
+- Embedded Figtree font, no Google Fonts request: the re-synced `signal_theme` loads Figtree from the bundled `signal_font.py`, and chart colours follow the per-family contrast order.
 
 ### Signal Hub contract
 
 - `segmentsignal.ui` exposes `APP_INFO` and `render()`, so Signal Hub can embed the app; `app.py` is now a thin standalone entry point.
 - All session-state and widget keys are namespaced `segment:` (including the page selector, buttons, downloads and charts). Programmatic navigation applies a pending page before the selector is drawn.
+- Opens with the fictional demo preloaded: a new session loads the fictional **Behavior table** demo once, so every page works without an upload. The demo buttons restore it or switch demos, an upload replaces it, and **Clear session data** still empties the session.
 - The demo generators moved into `segmentsignal.examples`, so the demo buttons work from an installed package; `scripts/generate_examples.py` still writes identical files to `examples/`.
 - `streamlit` and `plotly` moved to a `ui` extra (also in `test`, with `build` and `ruff`); the analysis core installs without them. `requirements.txt` still lists everything. Added a Ruff configuration.
 - New tests: no Streamlit/Plotly import outside `segmentsignal.ui`, `render()` runs from a script without a page config, every widget and state key is namespaced across the demo workflow, the demos work from a copy of the package outside the repository, and the README follows the Signal template.

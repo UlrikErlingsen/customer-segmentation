@@ -81,6 +81,7 @@ ANALYSIS_KEYS = (
     "comparison_settings", "comparison_seed", "chosen_diagnostics",
     "hierarchy_views", "hierarchy_views_key",
 )
+DEFAULT_DEMO = ("demo_customers.csv", "customer")  # the most representative demo, preloaded on first run
 DATA_KEYS = ("tables", "source_name", "active_table", "upload_fingerprint", "upload_identity", "_uploader_had_file")
 
 _USES_STRETCH_WIDTH = "width" in inspect.signature(st.button).parameters
@@ -118,6 +119,12 @@ def _ensure_state() -> None:
         ("nav_target", PAGES[0]),
     ):
         st.session_state.setdefault(k(name), default)
+    # First run of a session: open with the fictional behavior-table demo, so the whole workflow works without an
+    # upload. Only once, so "Clear session data" still empties the session; uploads and demo buttons replace it.
+    if not st.session_state.get(k("demo_preloaded")):
+        st.session_state[k("demo_preloaded")] = True
+        if not st.session_state.get(k("tables")):
+            load_demo(*DEFAULT_DEMO)
 
 
 def _new_data_epoch() -> None:
@@ -264,6 +271,13 @@ def welcome_page() -> None:
         ),
         pills=["No account", "No telemetry", "Guided preprocessing", "Honest “no segments” outcome"],
     )
+    if st.session_state.get(k("source_name")) == DEFAULT_DEMO[0]:
+        sig.note(
+            "info",
+            "**The fictional behavior-table demo is already loaded**, so you can open **1 · Data & purpose** and walk "
+            "the whole workflow now. It represents no real customer. Upload your own file in the sidebar to replace it, "
+            "or switch to another fictional demo.",
+        )
     sig.note("warn", CAUTION)
     sig.cards(
         [
