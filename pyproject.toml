@@ -32,12 +32,12 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = [
-  "plotly>=7.0.0,<8",
+  "plotly>=7.1.0,<8",
   "streamlit>=1.62.0,<2",
 ]
 test = [
   "build>=1.2,<2",
-  "plotly>=7.0.0,<8",
+  "plotly>=7.1.0,<8",
   "pytest>=9.1.1,<10",
   "ruff>=0.8,<1",
   "streamlit>=1.62.0,<2",
