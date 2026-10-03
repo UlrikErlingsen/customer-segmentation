@@ -10,4 +10,4 @@ Please do not open a public issue for a suspected vulnerability involving code e
 
 ## Scope and operating advice
 
-Segment Signal accepts tabular CSV and Excel files up to a configurable local limit of 200 MB; JSON is capped at 50 MB. It also enforces expanded-workbook, row, cell, customer, and model-column limits. It does not accept serialized Python models or execute spreadsheet macros. This reduces risk but does not make an internet deployment safe by itself. Hosted operators remain responsible for authentication, TLS, patching, access logging, isolation, backups, and data retention, and may choose a lower upload limit.
+Segment Signal accepts tabular CSV, Excel and JSON files up to a configurable local limit of 1,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB`). It also enforces expanded-workbook, row, cell, customer, and model-column limits. It does not accept serialized Python models or execute spreadsheet macros. This reduces risk but does not make an internet deployment safe by itself. Hosted operators remain responsible for authentication, TLS, patching, access logging, isolation, backups, and data retention, and may choose a lower upload limit.

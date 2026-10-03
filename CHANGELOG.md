@@ -2,6 +2,21 @@
 
 All notable changes to Segment Signal are documented here.
 
+## 1.3.0 - 2026-10-03
+
+### Larger datasets
+
+- Larger datasets: the local upload limit is 1,000 MB (was 200 MB) for every format; the separate 50 MB JSON limit is gone. `SEGMENTSIGNAL_MAX_UPLOAD_MB` (default 1000) now sets both Streamlit's upload limit and the app's own check, in `run_app.bat` as well as `run_app.command`. The Docker image sets `STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1000`.
+- Raw tables may have 10 million rows (was 1 million) and files 200 million cells (was 10 million); Excel content may expand to 1,000 MB (was 400 MB); Excel reads about 150,000 cells per second, so CSV is recommended for very large tables. The analysis accepts up to 10 million customers (was 25,000).
+- Above 25,000 customers, candidate comparison, stability refits and the final fit use a seeded random sample of 25,000 customers; preparation statistics use every customer, and every other customer is assigned to the nearest segment (or the most probable Gaussian-mixture component) with the same confidence measure. The app shows the sample and the export manifest records it as `model_sample`. Profiles, ANOVA, sizes and the customer-to-segment map cover every customer.
+- Above 100,000 customers the Excel and JSON packs carry a note in place of the customer-to-segment map, which the CSV download holds in full; large-table exports are built only when their button is clicked.
+- Faster, leaner reading and checks: CSV uses pandas' C parser in 250,000-row chunks with the delimiter detected from the header (comma, semicolon, tab or pipe); loaded tables are no longer copied; preparation works one column at a time; schema checks, profiles and the dataset fingerprint run once per table instead of on every rerun; RFM aggregation groups on integer codes. A purchase-date column that does not look like dates now fails fast on large logs instead of parsing value by value.
+- Measured on a 24-thread desktop: a 5-million-customer CSV (305 MB) runs the whole workflow in about 1.5 minutes with a peak of about 2.1 GB; a 10-million-row purchase log (335 MB) aggregates to 1.5 million customers in about 17 seconds with a peak of about 3.1 GB.
+
+### Suite
+
+- Suite: Rival, Reach, Learn and Blueprint Signal added to the suite table.
+
 ## 1.2.0 - 2026-10-02
 
 Signal brand refresh and Signal Hub entry point. The analysis, statistics, data formats and exports are unchanged.

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .errors import DataProblem
+from .io import MAX_TABLE_ROWS
 
 
 PII_PATTERNS = {
@@ -37,6 +38,26 @@ PROFILE_BASIS_PATTERNS = re.compile(
     re.I,
 )
 RAW_DATE_PATTERNS = re.compile(r"date|timestamp|datetime|created_at|updated_at", re.I)
+# Type hints on large tables read a seeded sample of non-missing values; analysis itself always uses every row.
+HINT_SAMPLE_ROWS = 200_000
+
+
+def _hint_sample(series: pd.Series) -> pd.Series:
+    nonmissing = series.dropna()
+    if len(nonmissing) > HINT_SAMPLE_ROWS:
+        return nonmissing.sample(HINT_SAMPLE_ROWS, random_state=0)
+    return nonmissing
+
+
+def unique_counts(frame: pd.DataFrame) -> dict[str, int]:
+    """Distinct non-missing values per column, computed once and shared by the schema checks below."""
+    return {str(column): int(frame[column].nunique(dropna=True)) for column in frame.columns}
+
+
+def _unique(frame: pd.DataFrame, column: object, uniques: dict[str, int] | None) -> int:
+    if uniques is not None and str(column) in uniques:
+        return uniques[str(column)]
+    return int(frame[column].nunique(dropna=True))
 
 
 def likely_pii_columns(frame: pd.DataFrame) -> dict[str, str]:
@@ -50,7 +71,7 @@ def likely_pii_columns(frame: pd.DataFrame) -> dict[str, str]:
                 break
         if name in flagged:
             continue
-        sample = frame[column].dropna().astype(str).head(100)
+        sample = frame[column].dropna().head(100).astype(str)
         if not sample.empty and sample.str.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$").mean() > 0.7:
             flagged[name] = "email"
     return flagged
@@ -61,15 +82,15 @@ def likely_sensitive_columns(frame: pd.DataFrame) -> list[str]:
     return [str(column) for column in frame.columns if SENSITIVE_PATTERNS.search(str(column))]
 
 
-def likely_id_columns(frame: pd.DataFrame) -> list[str]:
+def likely_id_columns(frame: pd.DataFrame, uniques: dict[str, int] | None = None) -> list[str]:
     """Suggest identifier columns without treating every unique numeric field as an ID."""
     named = [str(column) for column in frame.columns if ID_PATTERNS.search(str(column))]
     unique_text = [
         str(column)
         for column in frame.columns
         if frame[column].dtype == "object"
-        and frame[column].nunique(dropna=True) == len(frame)
         and ID_NAME_HINTS.search(str(column))
+        and _unique(frame, column, uniques) == len(frame)
     ]
     return list(dict.fromkeys(named + unique_text))
 
@@ -92,32 +113,42 @@ def default_basis_columns(frame: pd.DataFrame, id_column: str | None = None) -> 
     ][:12]
 
 
-def usable_basis_columns(frame: pd.DataFrame, id_column: str | None = None) -> list[str]:
+def usable_basis_columns(
+    frame: pd.DataFrame, id_column: str | None = None, uniques: dict[str, int] | None = None
+) -> list[str]:
     """Return non-sensitive, non-identifier columns suitable for guided clustering."""
-    blocked = set(likely_pii_columns(frame)) | set(likely_sensitive_columns(frame)) | set(likely_id_columns(frame))
+    blocked = (
+        set(likely_pii_columns(frame)) | set(likely_sensitive_columns(frame)) | set(likely_id_columns(frame, uniques))
+    )
     blocked.add("demo_truth")
     if id_column:
         blocked.add(id_column)
     usable: list[str] = []
     for column in frame.columns:
         name = str(column)
-        series = frame[column]
-        unique = int(series.nunique(dropna=True))
-        if name in blocked or unique <= 1 or RAW_DATE_PATTERNS.search(name):
+        if name in blocked or RAW_DATE_PATTERNS.search(name):
             continue
-        nonmissing = series.dropna()
-        numeric_like = bool(
-            len(nonmissing)
-            and pd.to_numeric(nonmissing, errors="coerce").notna().mean() >= 0.90
-        )
-        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series) or numeric_like or unique <= 30:
+        series = frame[column]
+        unique = _unique(frame, column, uniques)
+        if unique <= 1:
+            continue
+        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series) or unique <= 30:
+            usable.append(name)
+            continue
+        sample = _hint_sample(series)
+        if len(sample) and pd.to_numeric(sample, errors="coerce").notna().mean() >= 0.90:
             usable.append(name)
     return usable
 
 
-def suggest_basis_columns(frame: pd.DataFrame, id_column: str | None, recipe: str = "auto") -> list[str]:
-    """Suggest bases for behavioral, profile-only, or mixed customer tables."""
-    usable = usable_basis_columns(frame, id_column)
+def suggest_basis_columns(
+    frame: pd.DataFrame, id_column: str | None, recipe: str = "auto", usable: list[str] | None = None
+) -> list[str]:
+    """Suggest bases for behavioral, profile-only, or mixed customer tables.
+
+    ``usable`` may pass an already computed ``usable_basis_columns(frame, id_column)`` to avoid repeating it.
+    """
+    usable = usable_basis_columns(frame, id_column) if usable is None else usable
     behavior = [column for column in usable if BEHAVIOR_BASIS_PATTERNS.search(column)]
     profile = [column for column in usable if PROFILE_BASIS_PATTERNS.search(column)]
     if recipe == "behavior":
@@ -144,9 +175,10 @@ def validate_customer_table(frame: pd.DataFrame, id_column: str, basis_columns: 
         )
     if len(frame) < 30:
         raise DataProblem("At least 30 customers are required. More customers usually produce more stable segments.")
-    if len(frame) > 25_000:
+    if len(frame) > MAX_TABLE_ROWS:
         raise DataProblem(
-            "This release analyzes at most 25,000 customers at once. Use a representative sample or aggregate first."
+            f"This release analyzes at most {MAX_TABLE_ROWS:,} customers at once. Use a representative sample or "
+            "aggregate first."
         )
     if not basis_columns:
         raise DataProblem("Choose at least one segmentation basis variable.")
@@ -160,21 +192,22 @@ def validate_customer_table(frame: pd.DataFrame, id_column: str, basis_columns: 
         raise DataProblem("The selected basis variables do not vary between customers.")
 
 
-def data_quality_report(frame: pd.DataFrame) -> pd.DataFrame:
+def data_quality_report(frame: pd.DataFrame, uniques: dict[str, int] | None = None) -> pd.DataFrame:
     """Create a compact column-level audit table."""
     rows: list[dict[str, object]] = []
     pii = likely_pii_columns(frame)
     sensitive = set(likely_sensitive_columns(frame))
-    ids = set(likely_id_columns(frame))
+    ids = set(likely_id_columns(frame, uniques))
     for column in frame.columns:
         series = frame[column]
+        unique = _unique(frame, column, uniques)
         rows.append(
             {
                 "column": str(column),
                 "type": str(series.dtype),
                 "missing_%": round(100 * float(series.isna().mean()), 1),
-                "unique": int(series.nunique(dropna=True)),
-                "constant": bool(series.nunique(dropna=True) <= 1),
+                "unique": unique,
+                "constant": bool(unique <= 1),
                 "privacy_note": pii.get(str(column), "sensitive" if str(column) in sensitive else ""),
                 "likely_id": str(column) in ids,
             }

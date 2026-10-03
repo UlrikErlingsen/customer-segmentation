@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from .errors import DataProblem
@@ -25,9 +24,62 @@ class PreprocessConfig:
     max_categories: int = 20
 
 
+# Above this many customers, comparison and model fitting use a seeded random sample of this size; every customer
+# is still prepared with the same fitted transformations and assigned to a segment afterwards.
+MODEL_SAMPLE_ROWS = 25_000
+TRANSFORM_CHUNK_ROWS = 250_000
+
+
+@dataclass
+class FeatureTransform:
+    """Fitted preparation steps that turn any rows of the customer table into model-matrix rows."""
+
+    numeric_columns: list[str]
+    medians: np.ndarray
+    clip_lower: np.ndarray | None
+    clip_upper: np.ndarray | None
+    log_mask: np.ndarray
+    scalers: list[StandardScaler] | None
+    categorical: list[tuple[str, OneHotEncoder, np.ndarray, float]]
+
+    def _numeric_block(self, frame: pd.DataFrame) -> np.ndarray:
+        block = np.empty((len(frame), len(self.numeric_columns)), dtype=float)
+        for index, column in enumerate(self.numeric_columns):
+            values = _numeric_values(frame[column])
+            values[np.isnan(values)] = self.medians[index]
+            if self.clip_lower is not None and self.clip_upper is not None:
+                np.clip(values, self.clip_lower[index], self.clip_upper[index], out=values)
+            if self.log_mask[index]:
+                values = np.log1p(values)
+            if self.scalers is not None:
+                values = self.scalers[index].transform(values.reshape(-1, 1))[:, 0]
+            block[:, index] = values
+        return block
+
+    def transform(self, frame: pd.DataFrame) -> np.ndarray:
+        """Prepare rows exactly as the fitted model rows were prepared."""
+        parts: list[np.ndarray] = []
+        if self.numeric_columns:
+            parts.append(self._numeric_block(frame))
+        for column, encoder, variable_mask, weight in self.categorical:
+            encoded = encoder.transform(_categorical_values(frame[column]).to_frame()).toarray()
+            parts.append(encoded[:, variable_mask] * weight)
+        return np.column_stack(parts).astype(float)
+
+    def transform_in_chunks(self, frame: pd.DataFrame, chunk_rows: int = TRANSFORM_CHUNK_ROWS):
+        """Yield (start position, prepared rows) so a large table is never prepared as one dense matrix."""
+        for start in range(0, len(frame), chunk_rows):
+            yield start, self.transform(frame.iloc[start : start + chunk_rows])
+
+
 @dataclass
 class PreparedData:
-    """Model matrix plus an audit trail of transformations."""
+    """Model matrix plus an audit trail of transformations.
+
+    ``matrix`` holds the rows used to compare and fit models: every customer, or a seeded random sample of
+    ``MODEL_SAMPLE_ROWS`` for larger tables. ``sample_positions`` gives those rows' positions in the source table
+    (``None`` when every customer is in the matrix) and ``transform`` prepares any other rows the same way.
+    """
 
     matrix: np.ndarray
     feature_names: list[str]
@@ -35,6 +87,23 @@ class PreparedData:
     row_index: pd.Index
     warnings: list[str] = field(default_factory=list)
     audit: dict[str, object] = field(default_factory=dict)
+    transform: FeatureTransform | None = None
+    sample_positions: np.ndarray | None = None
+    total_rows: int = 0
+
+
+def _numeric_values(series: pd.Series) -> np.ndarray:
+    values = pd.to_numeric(series, errors="coerce")
+    if isinstance(values, pd.Series):
+        values = values.to_numpy(dtype=float, na_value=np.nan)
+    values = np.array(values, dtype=float, copy=True)
+    values[~np.isfinite(values)] = np.nan
+    return values
+
+
+def _categorical_values(series: pd.Series) -> pd.Series:
+    values = series.astype("object")
+    return values.where(values.notna(), "Missing").astype(str)
 
 
 def infer_feature_types(frame: pd.DataFrame, columns: list[str]) -> tuple[list[str], list[str]]:
@@ -55,8 +124,18 @@ def infer_feature_types(frame: pd.DataFrame, columns: list[str]) -> tuple[list[s
     return numeric, categorical
 
 
-def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedData:
-    """Impute, optionally tame skew/outliers, standardize, and one-hot encode."""
+def prepare_features(
+    frame: pd.DataFrame,
+    config: PreprocessConfig,
+    model_rows: int | None = MODEL_SAMPLE_ROWS,
+    seed: int = 42,
+) -> PreparedData:
+    """Impute, optionally tame skew/outliers, standardize, and one-hot encode.
+
+    Every statistic (medians, percentile limits, skew, scaling, category levels) is fitted on all customers. When the
+    table has more than ``model_rows`` customers, only a seeded random sample of that size is materialized as the
+    model matrix; ``PreparedData.transform`` prepares the remaining customers identically for assignment.
+    """
     selected = list(config.numeric_columns) + list(config.categorical_columns)
     if not selected:
         raise DataProblem("Choose at least one basis variable.")
@@ -66,21 +145,76 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
     if len(frame) < 3:
         raise DataProblem("Too few rows remain for segmentation.")
 
+    total_rows = len(frame)
+    sample_positions: np.ndarray | None = None
+    if model_rows is not None and total_rows > model_rows:
+        rng = np.random.default_rng(seed)
+        sample_positions = np.sort(rng.choice(total_rows, size=int(model_rows), replace=False))
+    take = slice(None) if sample_positions is None else sample_positions
+    model_row_count = total_rows if sample_positions is None else len(sample_positions)
+
     parts: list[np.ndarray] = []
     feature_names: list[str] = []
     warnings: list[str] = []
-    audit: dict[str, object] = {"rows": len(frame), "source_features": len(selected)}
+    audit: dict[str, object] = {"rows": total_rows, "source_features": len(selected)}
+    numeric_names: list[str] = []
+    medians = np.empty(0)
+    clip_lower: np.ndarray | None = None
+    clip_upper: np.ndarray | None = None
+    log_mask = np.zeros(0, dtype=bool)
+    scalers: list[StandardScaler] | None = None
 
     if config.numeric_columns:
-        raw_numeric = frame[list(config.numeric_columns)]
-        numeric = raw_numeric.apply(pd.to_numeric, errors="coerce").replace(
-            [np.inf, -np.inf], np.nan
-        )
-        parse_failures = {
-            column: int((raw_numeric[column].notna() & numeric[column].isna()).sum())
-            for column in config.numeric_columns
-        }
-        parse_failures = {column: count for column, count in parse_failures.items() if count}
+        parse_failures: dict[str, int] = {}
+        missing_rates: dict[str, float] = {}
+        imputation: dict[str, float | None] = {}
+        preexisting_missing = 0
+        kept_columns: list[str] = []
+        kept_medians: list[float] = []
+        dropped: list[str] = []
+        lower_bounds: list[float] = []
+        upper_bounds: list[float] = []
+        logged: list[str] = []
+        log_flags: list[bool] = []
+        fitted_scalers: list[StandardScaler] = []
+        block_columns: list[np.ndarray] = []
+        # One column at a time, so a large table never needs a full dense copy of every numeric basis.
+        for column in config.numeric_columns:
+            raw = frame[column]
+            raw_missing = raw.isna().to_numpy()
+            preexisting_missing += int(raw_missing.sum())
+            values = _numeric_values(raw)
+            missing_mask = np.isnan(values)
+            failures = int((~raw_missing & missing_mask).sum())
+            if failures:
+                parse_failures[column] = failures
+            missing_rates[column] = float(missing_mask.mean())
+            # Matches SimpleImputer(strategy="median", keep_empty_features=True): all-missing columns become 0.
+            median = float(np.median(values[~missing_mask])) if (~missing_mask).any() else 0.0
+            imputation[column] = median
+            values[missing_mask] = median
+            del missing_mask, raw_missing
+            if np.std(values) < 1e-12:
+                dropped.append(column)
+                continue
+            kept_columns.append(column)
+            kept_medians.append(median)
+            if config.clip_outliers:
+                low, high = np.quantile(values, [0.01, 0.99])
+                np.clip(values, low, high, out=values)
+                lower_bounds.append(float(low))
+                upper_bounds.append(float(high))
+            use_log = bool(config.log_skewed and np.min(values) >= 0 and pd.Series(values).skew() > 1)
+            log_flags.append(use_log)
+            if use_log:
+                values = np.log1p(values)
+                logged.append(column)
+            if config.standardize:
+                scaler = StandardScaler()
+                values = scaler.fit_transform(values.reshape(-1, 1))[:, 0]
+                fitted_scalers.append(scaler)
+            block_columns.append(values[take] if sample_positions is not None else values)
+            del values
         if parse_failures:
             warnings.append(
                 "Non-numeric values were treated as missing in: "
@@ -88,92 +222,78 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
                 + "."
             )
             audit["numeric_parse_failures"] = parse_failures
-        audit["preexisting_missing_values"] = int(raw_numeric.isna().sum().sum())
-        missing_rates = numeric.isna().mean()
-        heavy_missing = missing_rates[missing_rates > 0.4]
-        if not heavy_missing.empty:
-            warnings.append(
-                "More than 40% of values are missing in: " + ", ".join(map(str, heavy_missing.index)) + "."
-            )
-        imputer = SimpleImputer(strategy="median", keep_empty_features=True)
-        values = imputer.fit_transform(numeric)
-        audit["numeric_imputation"] = {
-            column: float(value) if np.isfinite(value) else None
-            for column, value in zip(config.numeric_columns, imputer.statistics_)
-        }
-        constant_mask = np.nanstd(values, axis=0) < 1e-12
-        if constant_mask.any():
-            dropped = [column for column, is_constant in zip(config.numeric_columns, constant_mask) if is_constant]
+        audit["preexisting_missing_values"] = preexisting_missing
+        heavy_missing = [column for column, rate in missing_rates.items() if rate > 0.4]
+        if heavy_missing:
+            warnings.append("More than 40% of values are missing in: " + ", ".join(map(str, heavy_missing)) + ".")
+        audit["numeric_imputation"] = imputation
+        if dropped:
             warnings.append("Constant numeric columns were excluded: " + ", ".join(dropped) + ".")
             audit["dropped_constant_numeric"] = dropped
-            values = values[:, ~constant_mask]
-            numeric_names = [column for column, is_constant in zip(config.numeric_columns, constant_mask) if not is_constant]
-        else:
-            numeric_names = list(config.numeric_columns)
 
-        if values.shape[1]:
+        if kept_columns:
+            numeric_names = kept_columns
+            medians = np.array(kept_medians)
             if config.clip_outliers:
-                lower = np.quantile(values, 0.01, axis=0)
-                upper = np.quantile(values, 0.99, axis=0)
-                values = np.clip(values, lower, upper)
+                clip_lower, clip_upper = np.array(lower_bounds), np.array(upper_bounds)
                 audit["outlier_clipping"] = "1st and 99th percentiles"
                 audit["clipping_bounds"] = {
-                    column: {"lower": float(low), "upper": float(high)}
-                    for column, low, high in zip(numeric_names, lower, upper)
+                    column: {"lower": low, "upper": high}
+                    for column, low, high in zip(numeric_names, lower_bounds, upper_bounds)
                 }
-            logged: list[str] = []
-            if config.log_skewed:
-                for index, column in enumerate(numeric_names):
-                    series = values[:, index]
-                    if np.min(series) >= 0 and pd.Series(series).skew() > 1:
-                        values[:, index] = np.log1p(series)
-                        logged.append(column)
+            log_mask = np.array(log_flags, dtype=bool)
             if logged:
                 audit["log1p_columns"] = logged
             if config.standardize:
-                scaler = StandardScaler()
-                values = scaler.fit_transform(values)
+                scalers = fitted_scalers
                 audit["scaler"] = {
-                    column: {"mean": float(mean), "scale": float(scale)}
-                    for column, mean, scale in zip(numeric_names, scaler.mean_, scaler.scale_)
+                    column: {"mean": float(scaler.mean_[0]), "scale": float(scaler.scale_[0])}
+                    for column, scaler in zip(numeric_names, fitted_scalers)
                 }
             else:
                 audit["scaler"] = "disabled — numeric bases kept on their original shared scale"
-            parts.append(values)
+            parts.append(np.column_stack(block_columns) if len(block_columns) > 1 else block_columns[0][:, None])
+            block_columns.clear()
             feature_names.extend(numeric_names)
 
+    categorical_steps: list[tuple[str, OneHotEncoder, np.ndarray, float]] = []
     if config.categorical_columns:
-        categorical = frame[list(config.categorical_columns)].astype("object")
-        for column in categorical.columns:
-            categorical[column] = categorical[column].where(categorical[column].notna(), "Missing").astype(str)
-            if categorical[column].nunique() > config.max_categories * 2:
-                warnings.append(
-                    f"{column} has many categories; infrequent values were grouped and the result may be harder to interpret."
-                )
         categorical_parts: list[np.ndarray] = []
         dropped_categorical: list[str] = []
         categorical_encoding: dict[str, object] = {}
+        minimum_frequency = max(2, int(round(total_rows * 0.01)))
         for column in config.categorical_columns:
+            values = _categorical_values(frame[column]).to_frame()
+            if values[column].nunique() > config.max_categories * 2:
+                warnings.append(
+                    f"{column} has many categories; infrequent values were grouped and the result may be harder to interpret."
+                )
             encoder = OneHotEncoder(
                 handle_unknown="ignore",
-                min_frequency=max(2, int(round(len(frame) * 0.01))),
+                min_frequency=minimum_frequency,
                 max_categories=config.max_categories,
-                sparse_output=False,
+                sparse_output=True,
             )
-            encoded = encoder.fit_transform(categorical[[column]])
-            variable_mask = np.std(encoded, axis=0) > 1e-12
+            encoded_all = encoder.fit_transform(values).tocsr()
+            del values
+            # A one-hot column varies exactly when its level is neither absent nor present for every customer.
+            counts = np.asarray(encoded_all.sum(axis=0)).ravel()
+            variable_mask = (counts > 0) & (counts < total_rows)
             if not variable_mask.any():
                 dropped_categorical.append(column)
                 continue
+            encoded = (encoded_all[take] if sample_positions is not None else encoded_all).toarray()
+            del encoded_all
             encoded = encoded[:, variable_mask]
             encoded_names = np.asarray(encoder.get_feature_names_out([column]))[variable_mask].tolist()
             categorical_encoding[column] = {
                 "observed_levels": [str(value) for value in encoder.categories_[0]],
                 "model_columns": encoded_names,
-                "minimum_frequency": max(2, int(round(len(frame) * 0.01))),
+                "minimum_frequency": minimum_frequency,
             }
             encoded *= config.categorical_weight
             categorical_parts.append(encoded)
+            categorical_steps.append((column, encoder, variable_mask, config.categorical_weight))
             feature_names.extend(encoded_names)
         if categorical_parts:
             parts.append(np.column_stack(categorical_parts))
@@ -195,8 +315,15 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
         raise DataProblem(
             "Preparation created more than 200 model columns. Remove high-cardinality or repetitive basis variables."
         )
-    if matrix.shape[1] > max(50, len(frame) // 3):
+    if matrix.shape[1] > max(50, total_rows // 3):
         warnings.append("There are many model columns relative to customers; simplify the basis variables if results are weak.")
+    if sample_positions is not None:
+        audit["model_sample"] = {
+            "customers": total_rows,
+            "model_rows": model_row_count,
+            "random_seed": int(seed),
+            "note": model_sample_note(total_rows, model_row_count),
+        }
     audit["model_features"] = matrix.shape[1]
     audit["missing_values_imputed"] = int(frame[selected].isna().sum().sum()) + int(
         sum(audit.get("numeric_parse_failures", {}).values())
@@ -210,4 +337,25 @@ def prepare_features(frame: pd.DataFrame, config: PreprocessConfig) -> PreparedD
     audit["max_categories"] = config.max_categories
     audit["feature_names"] = feature_names
     audit["warnings"] = warnings
-    return PreparedData(matrix, feature_names, selected, frame.index.copy(), warnings, audit)
+    transform = FeatureTransform(
+        numeric_columns=numeric_names,
+        medians=medians,
+        clip_lower=clip_lower,
+        clip_upper=clip_upper,
+        log_mask=log_mask,
+        scalers=scalers,
+        categorical=categorical_steps,
+    )
+    row_index = frame.index.copy() if sample_positions is None else frame.index[sample_positions]
+    return PreparedData(
+        matrix, feature_names, selected, row_index, warnings, audit, transform, sample_positions, total_rows
+    )
+
+
+def model_sample_note(total_rows: int, model_rows: int) -> str:
+    """The visible, exported explanation of the model sample used for large tables."""
+    return (
+        f"Preparation statistics use all {total_rows:,} customers. Candidate comparison, stability checks and the "
+        f"final model fit use a seeded random sample of {model_rows:,} customers; every other customer is then "
+        "assigned to the nearest segment."
+    )

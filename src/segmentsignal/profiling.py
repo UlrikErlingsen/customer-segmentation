@@ -18,17 +18,16 @@ def anova_table(frame: pd.DataFrame, segment_labels: np.ndarray, numeric_columns
     the F statistics and p-values are descriptive only — they rank which
     variables separate the groups most, and are not hypothesis tests.
     """
-    labels = pd.Series(np.asarray(segment_labels).astype(str), index=frame.index)
+    labels = np.asarray(segment_labels).astype(str)
+    # One boolean mask per segment, computed once and reused for every variable.
+    masks = [labels == segment for segment in sorted(set(labels.tolist()), key=lambda name: (len(name), name))]
     rows: list[dict[str, object]] = []
     for column in numeric_columns:
         if column not in frame.columns:
             continue
         values = pd.to_numeric(frame[column], errors="coerce")
-        valid = values.notna()
-        groups = [
-            values[valid & (labels == segment)]
-            for segment in sorted(labels.unique(), key=lambda name: (len(name), name))
-        ]
+        valid = values.notna().to_numpy()
+        groups = [values[valid & mask] for mask in masks]
         groups = [group for group in groups if len(group) >= 2]
         if len(groups) < 2:
             continue
@@ -107,7 +106,9 @@ def profile_segments(
 ) -> ProfileResult:
     """Profile segments on both formation bases and reachability descriptors."""
     descriptors = descriptor_columns or []
-    work = frame.copy()
+    selected = list(dict.fromkeys(basis_columns + descriptors))
+    # Only the profiled columns are copied, so a large customer table is not duplicated in full.
+    work = frame[selected].copy()
     label_column = "__segmentsignal_label__"
     while label_column in work.columns:
         label_column = "_" + label_column
@@ -126,8 +127,11 @@ def profile_segments(
         }
     )
 
-    selected = list(dict.fromkeys(basis_columns + descriptors))
     numeric_columns, categorical_columns = infer_feature_types(work, selected)
+
+    label_values = work[label_column].to_numpy()
+    # One boolean mask per segment, computed once and reused for every profiled column.
+    segment_masks = {segment: label_values == segment for segment in ordered_segments}
 
     numeric_rows: list[dict[str, object]] = []
     for column in numeric_columns:
@@ -135,7 +139,7 @@ def profile_segments(
         overall_mean = float(values.mean())
         overall_std = float(values.std(ddof=0))
         for segment in ordered_segments:
-            segment_values = values[work[label_column] == segment]
+            segment_values = values[segment_masks[segment]]
             mean = float(segment_values.mean())
             numeric_rows.append(
                 {
@@ -155,14 +159,20 @@ def profile_segments(
     for column in categorical_columns:
         values = work[column].fillna("Missing").astype(str)
         levels = values.value_counts().head(20).index.tolist()
+        # Integer codes make the many level comparisons cheap; the shares are the same counts as string matches.
+        codes, uniques = pd.factorize(values)
+        level_codes = {level: int(uniques.get_loc(level)) for level in levels}
+        overall_shares = {level: float((codes == level_codes[level]).mean()) for level in levels}
         for segment in ordered_segments:
-            segment_values = values[work[label_column] == segment]
+            mask = segment_masks[segment]
+            segment_values = values[mask]
             if segment_values.empty:
                 continue
+            segment_codes = codes[mask]
             mode = segment_values.value_counts().index[0]
             for level in levels:
-                share = float((segment_values == level).mean())
-                overall_share = float((values == level).mean())
+                share = float((segment_codes == level_codes[level]).mean())
+                overall_share = overall_shares[level]
                 categorical_rows.append(
                     {
                         "segment": segment,

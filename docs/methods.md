@@ -14,6 +14,10 @@ Categorical missing values become `Missing`. One-hot encoding groups infrequent 
 
 These are defensible defaults, not uniquely correct choices. The export records what was applied.
 
+### Large tables
+
+Every preparation statistic (medians, percentile limits, skewness, means and scales, category levels) is computed on all customers. Above 25,000 customers, the candidate comparison, the subsample-stability refits and the final model fit use a seeded random sample of 25,000 prepared rows, because those steps refit every candidate many times. The remaining customers are prepared with the same fitted transformations and assigned to the most probable component (Gaussian mixture) or the nearest segment center in prepared space (K-means, Ward, spectral); their membership confidence uses the same formula as the fitted customers. Sampled customers keep their fitted labels. Profiles, the descriptive ANOVA, segment sizes and the customer-to-segment map cover every customer. The app shows the sample, and the export manifest records it under `model_sample`.
+
 ## Candidate algorithms
 
 ### K-means

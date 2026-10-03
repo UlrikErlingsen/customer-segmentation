@@ -7,6 +7,7 @@ functions. ``render()`` never calls ``st.set_page_config`` or ``st.navigation``.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
 import inspect
 import json
@@ -24,17 +25,31 @@ import streamlit as st
 from segmentsignal import __version__
 from segmentsignal.errors import DataProblem, friendly_message
 from segmentsignal.examples import demo_csv_bytes
-from segmentsignal.features import build_rfm
-from segmentsignal.io import LoadedData, load_data, results_to_excel, results_to_json, safe_for_spreadsheet
+from segmentsignal.features import build_rfm, latest_date
+from segmentsignal.io import (
+    LoadedData,
+    dataset_fingerprint,
+    load_data,
+    results_to_excel,
+    results_to_json,
+    safe_for_spreadsheet,
+)
 from segmentsignal.modeling import (
     ALGORITHM_LABELS,
     SPECTRAL_ROW_LIMIT,
+    assign_all_customers,
     centroid_distances,
     compare_solutions,
     fit_solution,
     hierarchy_views,
 )
-from segmentsignal.preprocessing import PreprocessConfig, infer_feature_types, prepare_features
+from segmentsignal.preprocessing import (
+    MODEL_SAMPLE_ROWS,
+    PreprocessConfig,
+    infer_feature_types,
+    model_sample_note,
+    prepare_features,
+)
 from segmentsignal.profiling import anova_table, build_segment_map, profile_segments
 from segmentsignal.ui import signal_theme as sig
 from segmentsignal.validation import (
@@ -43,6 +58,7 @@ from segmentsignal.validation import (
     likely_pii_columns,
     likely_sensitive_columns,
     suggest_basis_columns,
+    unique_counts,
     usable_basis_columns,
     validate_customer_table,
 )
@@ -81,6 +97,9 @@ ANALYSIS_KEYS = (
     "comparison_settings", "comparison_seed", "chosen_diagnostics",
     "hierarchy_views", "hierarchy_views_key",
 )
+# Above this many customers the Excel and JSON packs carry a note instead of the customer-to-segment map, which is
+# then exported in full as CSV only (spreadsheet writers are slow at millions of rows, and Excel stops at 1,048,576).
+WORKBOOK_MAP_ROWS = 100_000
 DEFAULT_DEMO = ("demo_customers.csv", "customer")  # the most representative demo, preloaded on first run
 DATA_KEYS = ("tables", "source_name", "active_table", "upload_fingerprint", "upload_identity", "_uploader_had_file")
 
@@ -103,6 +122,37 @@ def _digest(*parts: object) -> str:
     widget start again from its new default, exactly as the former unkeyed widgets did.
     """
     return hashlib.sha256(json.dumps(parts, default=str, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+
+def memo(name: str, key: object, compute):
+    """Reuse a slow result across reruns while its inputs are unchanged.
+
+    Large tables make schema checks, profiles and exports take seconds, and Streamlit reruns the page on every
+    click. The store is cleared whenever data, the active table, the setup or the solution changes, so object
+    identities in ``key`` cannot be confused with a replaced object.
+    """
+    store = st.session_state.setdefault(k("memo"), {})
+    cached = store.get(name)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    value = compute()
+    store[name] = (key, value)
+    return value
+
+
+def memo_has(name: str, key: object) -> bool:
+    cached = st.session_state.get(k("memo"), {}).get(name)
+    return cached is not None and cached[0] == key
+
+
+def clear_memo() -> None:
+    st.session_state.pop(k("memo"), None)
+
+
+def store_solution(solution, chosen_diagnostics: dict) -> None:
+    clear_memo()
+    st.session_state[k("solution")] = solution
+    st.session_state[k("chosen_diagnostics")] = chosen_diagnostics
 
 
 def show_error(exc: Exception) -> None:
@@ -130,6 +180,7 @@ def _ensure_state() -> None:
 def _new_data_epoch() -> None:
     """New data or another table: data-dependent widgets start again from their defaults."""
     st.session_state[k("data_epoch")] = int(st.session_state.get(k("data_epoch"), 0)) + 1
+    clear_memo()
 
 
 def set_loaded(loaded: LoadedData, grain: str | None = None) -> None:
@@ -195,8 +246,12 @@ def _sidebar() -> str:
             if st.session_state.get(k("upload_identity")) != upload_identity:
                 try:
                     raw = uploaded.getvalue()
-                    fingerprint = hashlib.sha256(uploaded.name.encode("utf-8") + b"\0" + raw).hexdigest()
-                    set_loaded(load_data(raw, name=uploaded.name))
+                    # Hash incrementally: concatenating name and content would copy a large upload once more.
+                    digest = hashlib.sha256(uploaded.name.encode("utf-8") + b"\0")
+                    digest.update(raw)
+                    fingerprint = digest.hexdigest()
+                    with st.spinner(f"Reading {uploaded.name} ({len(raw) / 1024 / 1024:,.0f} MB)…"):
+                        set_loaded(load_data(raw, name=uploaded.name))
                     st.session_state[k("upload_fingerprint")] = fingerprint
                     st.session_state[k("upload_identity")] = upload_identity
                     st.session_state[k("_uploader_had_file")] = False
@@ -310,18 +365,25 @@ def data_page() -> None:
         return
     epoch = st.session_state[k("data_epoch")]
 
+    frame_key = id(frame)
+    if len(frame) > 100_000 and not memo_has("quality_report", frame_key):
+        with st.spinner(f"Checking {len(frame):,} rows for types, identifiers and privacy hints…"):
+            uniques = memo("unique_counts", frame_key, lambda: unique_counts(frame))
+            memo("quality_report", frame_key, lambda: data_quality_report(frame, uniques))
+            memo("duplicate_rows", frame_key, lambda: int(frame.duplicated().sum()))
+    uniques = memo("unique_counts", frame_key, lambda: unique_counts(frame))
     top = st.columns(4)
     top[0].metric("Rows", f"{len(frame):,}")
     top[1].metric("Columns", len(frame.columns))
-    top[2].metric("Missing cells", f"{int(frame.isna().sum().sum()):,}")
-    top[3].metric("Duplicate rows", f"{int(frame.duplicated().sum()):,}")
+    top[2].metric("Missing cells", f"{memo('missing_cells', frame_key, lambda: int(frame.isna().sum().sum())):,}")
+    top[3].metric("Duplicate rows", f"{memo('duplicate_rows', frame_key, lambda: int(frame.duplicated().sum())):,}")
     full_width(st.dataframe, frame.head(12), hide_index=True)
 
     with st.expander("Data quality and privacy check", expanded=True):
-        report = data_quality_report(frame)
+        report = memo("quality_report", frame_key, lambda: data_quality_report(frame, uniques))
         full_width(st.dataframe, report, hide_index=True)
-        pii = likely_pii_columns(frame)
-        sensitive = likely_sensitive_columns(frame)
+        pii = memo("pii", frame_key, lambda: likely_pii_columns(frame))
+        sensitive = memo("sensitive", frame_key, lambda: likely_sensitive_columns(frame))
         if pii:
             st.warning("Likely direct identifiers are excluded from automatic basis suggestions: " + ", ".join(pii) + ".")
         if sensitive:
@@ -352,7 +414,7 @@ def data_page() -> None:
             "RFM and customer-value fields are optional here. You can segment from needs ratings, survey scores, "
             "demographics, product usage, categories, or other structured variables—provided each row is one customer."
         )
-        id_hints = likely_id_columns(frame)
+        id_hints = memo("id_hints", frame_key, lambda: likely_id_columns(frame, uniques))
         id_index = columns.index(id_hints[0]) if id_hints and id_hints[0] in columns else 0
         id_column = st.selectbox("Customer ID", columns, index=id_index, key=k(f"id_column_{epoch}"))
         recipe_labels = {
@@ -368,7 +430,7 @@ def data_page() -> None:
             key=k("recipe"),
         )
         recipe = recipe_labels[recipe_label]
-        basis_options = usable_basis_columns(frame, id_column)
+        basis_options = memo("basis_options", (frame_key, id_column), lambda: usable_basis_columns(frame, id_column, uniques))
         familiar_defaults = [
             column
             for column in [
@@ -380,7 +442,11 @@ def data_page() -> None:
         defaults = (
             familiar_defaults
             if recipe == "auto" and len(familiar_defaults) >= 2
-            else suggest_basis_columns(frame, id_column, recipe)
+            else memo(
+                "basis_suggestion",
+                (frame_key, id_column, recipe),
+                lambda: suggest_basis_columns(frame, id_column, recipe, usable=basis_options),
+            )
         )
         if recipe == "profile":
             st.warning(
@@ -401,13 +467,14 @@ def data_page() -> None:
         descriptor_options = [
             column
             for column in columns
-            if column not in set(basis_columns + [id_column, "demo_truth"]) and column not in likely_pii_columns(frame)
+            if column not in set(basis_columns + [id_column, "demo_truth"]) and column not in pii
         ]
-        descriptor_defaults = [
-            column
-            for column in suggest_basis_columns(frame, id_column, "profile")
-            if column in descriptor_options
-        ][:8]
+        profile_suggestion = memo(
+            "profile_suggestion",
+            (frame_key, id_column),
+            lambda: suggest_basis_columns(frame, id_column, "profile", usable=basis_options),
+        )
+        descriptor_defaults = [column for column in profile_suggestion if column in descriptor_options][:8]
         descriptor_columns = st.multiselect(
             "Descriptors — variables used only to explain and reach the groups",
             descriptor_options,
@@ -417,7 +484,11 @@ def data_page() -> None:
         )
         numeric_basis = [column for column in basis_columns if pd.api.types.is_numeric_dtype(frame[column])]
         if len(numeric_basis) >= 2:
-            correlations = frame[numeric_basis].corr(numeric_only=True).abs()
+            correlations = memo(
+                "basis_correlations",
+                (frame_key, tuple(numeric_basis)),
+                lambda: frame[numeric_basis].corr(numeric_only=True).abs(),
+            )
             high_pairs = [
                 (left, right, float(correlations.loc[left, right]))
                 for left_index, left in enumerate(numeric_basis)
@@ -470,8 +541,10 @@ def data_page() -> None:
                     standardize=standardize,
                     categorical_weight=categorical_weight,
                 )
+                clear_memo()
+                # The loaded table is never modified in place, so the setup keeps a reference rather than a copy.
                 st.session_state[k("setup")] = {
-                    "frame": frame.copy(), "id_column": id_column, "basis": basis_columns,
+                    "frame": frame, "id_column": id_column, "basis": basis_columns,
                     "descriptors": descriptor_columns, "config": config, "goal": goal,
                     "source": st.session_state.get(k("source_name")),
                 }
@@ -481,7 +554,7 @@ def data_page() -> None:
             except Exception as exc:
                 show_error(exc)
     else:
-        id_hints = likely_id_columns(frame)
+        id_hints = memo("id_hints", frame_key, lambda: likely_id_columns(frame, uniques))
         id_index = columns.index(id_hints[0]) if id_hints and id_hints[0] in columns else 0
         customer_column = st.selectbox("Customer ID", columns, index=id_index, key=k(f"customer_column_{epoch}"))
         date_hints = [i for i, column in enumerate(columns) if "date" in column.lower() or "time" in column.lower()]
@@ -496,11 +569,9 @@ def data_page() -> None:
         order_selected = st.selectbox(
             "Order ID (optional)", order_options, index=order_default, key=k(f"order_column_{epoch}")
         )
-        parsed_dates = pd.to_datetime(frame[date_column], errors="coerce")
+        latest = memo("latest_date", (frame_key, date_column), lambda: latest_date(frame[date_column]))
         suggested_reference = (
-            (pd.Timestamp(parsed_dates.max()) + pd.Timedelta(1, unit="D")).date()
-            if parsed_dates.notna().any()
-            else pd.Timestamp.today().date()
+            (latest + pd.Timedelta(1, unit="D")).date() if latest is not None else pd.Timestamp.today().date()
         )
         reference_date = st.date_input(
             "Analysis reference date",
@@ -524,14 +595,16 @@ def data_page() -> None:
         st.caption("We create recency, frequency, monetary value, average order value, and customer tenure. Refunds can remain negative if that matches your data.")
         if st.button("Build RFM features and save setup", type="primary", key=k("build_rfm")):
             try:
-                rfm = build_rfm(
-                    frame, customer_column, date_column, amount_column,
-                    None if order_selected == "— count rows —" else order_selected,
-                    reference_date,
-                )
+                with st.spinner(f"Aggregating {len(frame):,} purchase rows to one row per customer…"):
+                    rfm = build_rfm(
+                        frame, customer_column, date_column, amount_column,
+                        None if order_selected == "— count rows —" else order_selected,
+                        reference_date,
+                    )
                 basis_columns = rfm_basis
                 validate_customer_table(rfm, "customer_id", basis_columns)
                 config = PreprocessConfig(numeric_columns=tuple(basis_columns))
+                clear_memo()
                 st.session_state[k("setup")] = {
                     "frame": rfm, "id_column": "customer_id", "basis": basis_columns,
                     "descriptors": [], "config": config, "goal": goal,
@@ -562,6 +635,7 @@ def compare_page() -> None:
         st.info("Save a data setup on page 1 first.")
         return
     frame = setup["frame"]
+    model_rows = min(len(frame), MODEL_SAMPLE_ROWS)
     context = st.columns(4)
     context[0].metric("Customers", f"{len(frame):,}")
     context[1].metric("Basis variables", len(setup["basis"]))
@@ -576,18 +650,20 @@ def compare_page() -> None:
     context[3].metric("Purpose", purpose_labels.get(setup["goal"], "Explore"))
 
     labels_to_keys = {label: key for key, label in ALGORITHM_LABELS.items()}
-    binary_numeric = [
-        column
-        for column in setup["config"].numeric_columns
-        if frame[column].dropna().nunique() <= 2
-    ]
+    binary_numeric = memo(
+        "binary_numeric",
+        (id(frame), tuple(setup["config"].numeric_columns)),
+        lambda: [column for column in setup["config"].numeric_columns if frame[column].dropna().nunique() <= 2],
+    )
     if setup["config"].categorical_columns or binary_numeric:
         labels_to_keys.pop("Gaussian mixture", None)
         st.info(
             "Gaussian mixtures are omitted because this setup contains categorical or binary basis variables. "
             "A full-covariance Gaussian likelihood is not appropriate for an exact one-hot or binary block."
         )
-    if len(frame) > SPECTRAL_ROW_LIMIT:
+    if len(frame) > MODEL_SAMPLE_ROWS:
+        sig.note("info", "**Large table:** " + model_sample_note(len(frame), model_rows) + " The note is saved in every export.")
+    if model_rows > SPECTRAL_ROW_LIMIT:
         labels_to_keys.pop(ALGORITHM_LABELS["spectral"], None)
         st.caption(
             f"Spectral clustering is hidden above {SPECTRAL_ROW_LIMIT:,} customers because it compares every "
@@ -595,14 +671,14 @@ def compare_page() -> None:
         )
     default_methods = ["K-means"] + (
         ["Gaussian mixture"] if "Gaussian mixture" in labels_to_keys else []
-    ) + (["Hierarchical (Ward)"] if len(frame) <= 1500 else [])
+    ) + (["Hierarchical (Ward)"] if model_rows <= 1500 else [])
     chosen_labels = st.multiselect(
         "Methods to compare",
         list(labels_to_keys),
         default=default_methods,
         key=k(f"methods_{_digest(list(labels_to_keys), default_methods)}"),
     )
-    maximum_k = min(50, len(frame) - 1)
+    maximum_k = min(50, model_rows - 1)
     count_mode = st.radio(
         "How do you want to choose the number of segments?",
         ["Compare a guided range", "Test specific numbers"],
@@ -624,7 +700,7 @@ def compare_page() -> None:
             key=k(f"exact_counts_{maximum_k}"),
         )
     if candidate_k_values and (
-        max(candidate_k_values) > 8 or len(frame) / max(candidate_k_values) < 20
+        max(candidate_k_values) > 8 or model_rows / max(candidate_k_values) < 20
     ):
         st.warning(
             "You are free to test this. Expect smaller or less stable groups, and do not treat a fitted solution as useful "
@@ -636,7 +712,8 @@ def compare_page() -> None:
         st.caption("Each candidate is refitted on repeated 80% subsamples. An adjusted Rand index near 1 means customer memberships are stable.")
     st.caption(
         f"Planned workload: {len(chosen_labels)} method(s) × {len(candidate_k_values)} segment count(s) × "
-        f"{stability_repeats} stability refits on {len(frame):,} customers."
+        f"{stability_repeats} stability refits on {model_rows:,} customers"
+        + (f" (a random sample of {len(frame):,})." if model_rows < len(frame) else ".")
     )
     comparison_settings = {
         "algorithms": [labels_to_keys[label] for label in chosen_labels],
@@ -651,7 +728,7 @@ def compare_page() -> None:
     if st.button("Run the comparison", type="primary", key=k("run_comparison")):
         try:
             with st.spinner("Preparing variables and testing candidate solutions…"):
-                prepared = prepare_features(frame, setup["config"])
+                prepared = prepare_features(frame, setup["config"], model_rows=MODEL_SAMPLE_ROWS, seed=int(seed))
                 comparison = compare_solutions(
                     prepared.matrix,
                     algorithms=tuple(labels_to_keys[label] for label in chosen_labels),
@@ -665,6 +742,7 @@ def compare_page() -> None:
             st.session_state[k("comparison_settings")] = comparison_settings
             st.session_state[k("comparison_signature")] = current_signature
             st.session_state.pop(k("solution"), None)
+            clear_memo()
         except Exception as exc:
             show_error(exc)
 
@@ -729,7 +807,7 @@ def compare_page() -> None:
     chart.update_layout(height=390, legend_title_text="", hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10))
     sig.chart(NS, chart, key=k("score_chart"))
 
-    if len(frame) <= 5000:
+    if len(prepared.matrix) <= 5000:
         with st.expander("How the customer base splits — hierarchy views"):
             st.caption(
                 "These views use Ward hierarchical clustering on the same prepared variables. "
@@ -782,21 +860,24 @@ def compare_page() -> None:
                 )
                 sig.chart(NS, tree, key=k("dendrogram_chart"))
     else:
-        st.caption("Hierarchy views (split boxes and dendrogram) are available for files up to 5,000 customers.")
+        st.caption(
+            "Hierarchy views (split boxes and dendrogram) are available when the comparison uses up to 5,000 customers."
+        )
 
     options = [f"{row.method} · {int(row.segments)} segments" for row in diagnostics.itertuples()]
     chosen = st.selectbox("Candidate to carry forward", options, key=k(f"candidate_{_digest(options)}"))
     chosen_row = diagnostics.iloc[options.index(chosen)]
     if st.button("Create this segmentation", type="primary", key=k("create_segmentation")):
         try:
-            solution = fit_solution(
-                prepared.matrix,
-                str(chosen_row["algorithm_key"]),
-                int(chosen_row["segments"]),
-                seed=st.session_state.get(k("comparison_seed"), 42),
-            )
-            st.session_state[k("solution")] = solution
-            st.session_state[k("chosen_diagnostics")] = chosen_row.to_dict()
+            with st.spinner("Fitting the chosen solution and assigning every customer…"):
+                solution = fit_solution(
+                    prepared.matrix,
+                    str(chosen_row["algorithm_key"]),
+                    int(chosen_row["segments"]),
+                    seed=st.session_state.get(k("comparison_seed"), 42),
+                )
+                solution = assign_all_customers(solution, prepared, frame)
+            store_solution(solution, chosen_row.to_dict())
             go_to("3 · Profiles & export")
             st.rerun()
         except Exception as exc:
@@ -815,19 +896,23 @@ def compare_page() -> None:
         )
         if st.button("Create custom segmentation", key=k("create_custom")):
             try:
-                solution = fit_solution(
-                    prepared.matrix,
-                    labels_to_keys[custom_method_label],
-                    int(custom_k),
-                    seed=st.session_state.get(k("comparison_seed"), 42),
+                with st.spinner("Fitting the custom solution and assigning every customer…"):
+                    solution = fit_solution(
+                        prepared.matrix,
+                        labels_to_keys[custom_method_label],
+                        int(custom_k),
+                        seed=st.session_state.get(k("comparison_seed"), 42),
+                    )
+                    solution = assign_all_customers(solution, prepared, frame)
+                store_solution(
+                    solution,
+                    {
+                        "algorithm_key": labels_to_keys[custom_method_label],
+                        "method": custom_method_label,
+                        "segments": int(custom_k),
+                        "note": "Custom fit chosen by the user; this exact combination was not evaluated in the comparison table.",
+                    },
                 )
-                st.session_state[k("solution")] = solution
-                st.session_state[k("chosen_diagnostics")] = {
-                    "algorithm_key": labels_to_keys[custom_method_label],
-                    "method": custom_method_label,
-                    "segments": int(custom_k),
-                    "note": "Custom fit chosen by the user; this exact combination was not evaluated in the comparison table.",
-                }
                 go_to("3 · Profiles & export")
                 st.rerun()
             except Exception as exc:
@@ -862,8 +947,23 @@ def profiles_page() -> None:
         f"{solution.k} segments{active_note}. Change it any time on page 2."
     )
     frame = setup["frame"]
-    profile = profile_segments(frame, solution.segment_labels, setup["basis"], setup["descriptors"])
+    if len(solution.segment_labels) != len(frame):
+        st.warning("The setup changed after this segmentation was created. Run the comparison again on page 2.")
+        return
+    solution_key = (id(frame), id(solution))
+    with st.spinner(f"Profiling {len(frame):,} customers…") if not memo_has("profile", solution_key) else nullcontext():
+        profile = memo(
+            "profile",
+            solution_key,
+            lambda: profile_segments(frame, solution.segment_labels, setup["basis"], setup["descriptors"]),
+        )
     sig.note("warn", CAUTION)
+    if solution.fit_positions is not None:
+        st.caption(
+            f"The model was fitted on a random sample of {len(solution.fit_positions):,} customers; the other "
+            f"{len(frame) - len(solution.fit_positions):,} were assigned to the nearest segment. Profiles, sizes and "
+            "exports cover every customer."
+        )
 
     cards_for_edit = profile.cards[["segment", "suggested_name"]].rename(columns={"suggested_name": "editable_name"})
     st.subheader("Give the groups names your team can actually use")
@@ -1027,11 +1127,13 @@ def profiles_page() -> None:
                 "The customer map above uses artificial compressed axes. Here you can plot any two of your real "
                 "variables in their original units and see how the segments overlap in everyday terms."
             )
-            explore = frame[explore_columns].copy()
-            explore["segment_name"] = pd.Series(solution.segment_labels, index=frame.index).map(names)
+            explore_labels = pd.Series(solution.segment_labels, index=frame.index)
+            explore = frame[explore_columns]
             if len(explore) > 5000:
                 explore = explore.sample(5000, random_state=seed)
                 st.caption("Sampled to 5,000 customers for browser performance.")
+            explore = explore.copy()
+            explore["segment_name"] = explore_labels.loc[explore.index].map(names)
             axis_columns = st.columns(2)
             x_variable = axis_columns[0].selectbox("Horizontal axis", explore_columns, index=0, key=k("explore_x"))
             y_variable = axis_columns[1].selectbox(
@@ -1067,7 +1169,9 @@ def profiles_page() -> None:
         ]
         if numeric_basis_columns:
             st.markdown("**Variable differences across segments — one-way ANOVA**")
-            anova = anova_table(frame, solution.segment_labels, numeric_basis_columns)
+            anova = memo(
+                "anova", solution_key, lambda: anova_table(frame, solution.segment_labels, numeric_basis_columns)
+            )
             if anova.empty:
                 st.info("The ANOVA table could not be computed for these variables.")
             else:
@@ -1087,7 +1191,12 @@ def profiles_page() -> None:
         prepared_state = st.session_state.get(k("prepared"))
         if prepared_state is not None:
             st.markdown("**Distances between final segment centers**")
-            distances = centroid_distances(prepared_state.matrix, solution.segment_labels)
+            fitted_labels = (
+                solution.segment_labels
+                if solution.fit_positions is None
+                else solution.segment_labels[solution.fit_positions]
+            )
+            distances = centroid_distances(prepared_state.matrix, fitted_labels)
             distances = distances.rename(index=names, columns=names)
             full_width(st.dataframe, distances)
             st.caption(
@@ -1101,7 +1210,27 @@ def profiles_page() -> None:
         "or actions. **Tip:** join the segment column onto your transaction history and open it in **Worth Signal** "
         "(our customer-value sibling) to compare each segment’s value, retention, and CLV."
     )
-    segment_map = build_segment_map(frame, setup["id_column"], solution.segment_labels, solution.confidence, names)
+    segment_map = memo(
+        "segment_map",
+        (solution_key, tuple(sorted(names.items()))),
+        lambda: build_segment_map(frame, setup["id_column"], solution.segment_labels, solution.confidence, names),
+    )
+    map_in_workbook = len(segment_map) <= WORKBOOK_MAP_ROWS
+    if map_in_workbook:
+        workbook_map = segment_map
+    else:
+        workbook_map = pd.DataFrame(
+            {
+                "note": [
+                    f"The customer-to-segment map has {len(segment_map):,} rows, above the {WORKBOOK_MAP_ROWS:,}-row "
+                    "limit for the Excel and JSON packs. Download the customer segment CSV for every customer."
+                ]
+            }
+        )
+        st.caption(
+            f"The map has {len(segment_map):,} customers, so the Excel and JSON packs carry a note in its place and the "
+            "**customer segment CSV** holds every customer."
+        )
     numeric_export = profile.numeric.copy()
     categorical_export = profile.categorical.copy()
     diagnostics = pd.DataFrame([st.session_state.get(k("chosen_diagnostics"), {})])
@@ -1111,61 +1240,57 @@ def profiles_page() -> None:
         comparison.failures if comparison is not None else pd.DataFrame(columns=["method", "segments", "reason"])
     )
     fingerprint_columns = list(dict.fromkeys([setup["id_column"]] + setup["basis"]))
-    dataset_fingerprint = hashlib.sha256(
-        pd.util.hash_pandas_object(frame[fingerprint_columns].astype(str), index=True).values.tobytes()
-    ).hexdigest()
     prepared = st.session_state.get(k("prepared"))
-    metadata = {
+    base_metadata = {
         "product": "Segment Signal", "version": __version__, "source": setup.get("source"), "purpose": setup["goal"],
         "algorithm": solution.algorithm, "segments": solution.k, "random_seed": seed,
         "basis_variables": setup["basis"], "descriptor_variables": setup["descriptors"],
         "preprocessing": prepared.audit if prepared else {},
         "comparison_settings": st.session_state.get(k("comparison_settings"), {}),
-        "dataset_fingerprint_sha256": dataset_fingerprint,
-        "customer_rows": len(frame),
-        "library_versions": {
-            "python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__,
-            "scikit_learn": sklearn.__version__, "streamlit": st.__version__,
-        },
-        "caution": "Patterns in this sample; not causal findings or objective customer types.",
     }
-    manifest = pd.DataFrame(
-        {
-            "field": list(metadata),
-            "value": [json.dumps(value, default=str, sort_keys=True) if isinstance(value, (dict, list)) else str(value) for value in metadata.values()],
+
+    def build_metadata() -> dict:
+        # The fingerprint reads every customer once, so large tables compute it only when a pack is downloaded.
+        fingerprint = dataset_fingerprint(frame, fingerprint_columns)
+        return {
+            **base_metadata,
+            "dataset_fingerprint_sha256": fingerprint,
+            "customer_rows": len(frame),
+            "model_sample": (prepared.audit.get("model_sample") if prepared else None)
+            or "none — the model was fitted on every customer",
+            "customer_segment_map_in_workbook": map_in_workbook,
+            "library_versions": {
+                "python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__,
+                "scikit_learn": sklearn.__version__, "streamlit": st.__version__,
+            },
+            "caution": "Patterns in this sample; not causal findings or objective customer types.",
         }
-    )
-    workbook = results_to_excel(
-        {
-            "Analysis manifest": manifest,
-            "Customer segment map": segment_map,
-            "Segment summary": summary,
-            "Numeric profiles": numeric_export,
-            "Category profiles": categorical_export,
-            "Chosen diagnostics": diagnostics,
-            "All candidates": all_candidates,
-            "Candidate failures": candidate_failures,
-        }
-    )
-    downloads = st.columns(3)
-    full_width(
-        downloads[0].download_button,
-        "Download full Excel pack", workbook, "segmentsignal_results.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key=k("download_excel"),
-    )
-    full_width(
-        downloads[1].download_button,
-        "Download customer segment CSV", safe_for_spreadsheet(segment_map).to_csv(index=False).encode("utf-8"),
-        "customer_segment_map.csv", "text/csv",
-        key=k("download_csv"),
-    )
-    full_width(
-        downloads[2].download_button,
-        "Download JSON + audit trail",
-        results_to_json(
+
+    def build_excel() -> bytes:
+        metadata = build_metadata()
+        manifest = pd.DataFrame(
             {
-                "customer_segment_map": segment_map,
+                "field": list(metadata),
+                "value": [json.dumps(value, default=str, sort_keys=True) if isinstance(value, (dict, list)) else str(value) for value in metadata.values()],
+            }
+        )
+        return results_to_excel(
+            {
+                "Analysis manifest": manifest,
+                "Customer segment map": workbook_map,
+                "Segment summary": summary,
+                "Numeric profiles": numeric_export,
+                "Category profiles": categorical_export,
+                "Chosen diagnostics": diagnostics,
+                "All candidates": all_candidates,
+                "Candidate failures": candidate_failures,
+            }
+        )
+
+    def build_json() -> bytes:
+        return results_to_json(
+            {
+                "customer_segment_map": workbook_map,
                 "segment_summary": summary,
                 "numeric_profiles": numeric_export,
                 "categorical_profiles": categorical_export,
@@ -1173,8 +1298,37 @@ def profiles_page() -> None:
                 "all_candidates": all_candidates,
                 "candidate_failures": candidate_failures,
             },
-            metadata,
-        ),
+            build_metadata(),
+        )
+
+    def build_csv() -> bytes:
+        return safe_for_spreadsheet(segment_map).to_csv(index=False).encode("utf-8")
+
+    # Small tables: build the files now (once per solution and names). Large tables: Streamlit calls each builder
+    # only when its button is clicked, so reruns stay fast and no unused export sits in memory.
+    export_key = (solution_key, tuple(sorted(names.items())))
+    if map_in_workbook:
+        excel_data = memo("excel_pack", export_key, build_excel)
+        csv_data = build_csv()
+        json_data = memo("json_pack", export_key, build_json)
+    else:
+        excel_data, csv_data, json_data = build_excel, build_csv, build_json
+    downloads = st.columns(3)
+    full_width(
+        downloads[0].download_button,
+        "Download full Excel pack", excel_data, "segmentsignal_results.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=k("download_excel"),
+    )
+    full_width(
+        downloads[1].download_button,
+        "Download customer segment CSV", csv_data,
+        "customer_segment_map.csv", "text/csv",
+        key=k("download_csv"),
+    )
+    full_width(
+        downloads[2].download_button,
+        "Download JSON + audit trail", json_data,
         "segmentsignal_results.json", "application/json",
         key=k("download_json"),
     )
@@ -1214,7 +1368,7 @@ def methods_page() -> None:
     )
     st.subheader("Important boundaries")
     st.markdown(
-        """
+        f"""
         - A 2-D PCA chart is a projection, not validation.
         - Demographics may describe segments but often make poor substitutes for needs or behavior.
         - Outliers can be errors, isolated customers, or emerging needs. This app clips extremes by default but never silently deletes rows.
@@ -1222,6 +1376,9 @@ def methods_page() -> None:
         - Segment names are editable descriptions, not facts about people.
         - Regression and classification predict outcomes or future membership; they are not segmentation methods and are outside this first release.
         - Segments can drift. Repeat the analysis on later data before keeping a strategy indefinitely.
+        - Large tables: preparation statistics use every customer, while candidate comparison, stability checks and the
+          final fit use a seeded random sample of {MODEL_SAMPLE_ROWS:,} customers. Every other customer is assigned to the
+          nearest segment, and the exports record the sample.
         """
     )
     with st.expander("References and implementation notes"):

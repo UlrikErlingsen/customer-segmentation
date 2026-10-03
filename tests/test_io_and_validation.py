@@ -36,7 +36,7 @@ def test_file_type_and_size_are_guarded(monkeypatch):
     with pytest.raises(DataProblem, match="file types"):
         load_data(b"hello", name="unsafe.pkl")
     monkeypatch.setattr("segmentsignal.io.MAX_UPLOAD_BYTES", 8)
-    with pytest.raises(DataProblem, match="configured 200 MB"):
+    with pytest.raises(DataProblem, match="configured 1,000 MB"):
         load_data(b"x" * 9, name="large.csv")
 
 

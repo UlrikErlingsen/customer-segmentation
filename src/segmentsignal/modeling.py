@@ -20,6 +20,7 @@ from sklearn.metrics import (
 from sklearn.mixture import GaussianMixture
 
 from .errors import DataProblem
+from .preprocessing import MODEL_SAMPLE_ROWS, PreparedData
 
 
 ALGORITHM_LABELS = {
@@ -61,6 +62,10 @@ class SegmentSolution:
     confidence: np.ndarray
     projection: pd.DataFrame
     explained_variance: float
+    model: object | None = None
+    # Positions (in the source table) of the customers the model was fitted on, when it was fitted on a sample and
+    # every other customer was assigned afterwards; ``None`` when the model saw every customer.
+    fit_positions: np.ndarray | None = None
 
 
 def _fit_labels(matrix: np.ndarray, algorithm: str, k: int, seed: int) -> tuple[np.ndarray, object]:
@@ -187,8 +192,11 @@ def compare_solutions(
     matrix = np.asarray(matrix, dtype=float)
     if matrix.ndim != 2 or len(matrix) < 30:
         raise DataProblem("At least 30 prepared customer rows are required for comparison.")
-    if len(matrix) > 25_000 or matrix.shape[1] > 200:
-        raise DataProblem("The prepared analysis exceeds the supported limit of 25,000 rows by 200 model columns.")
+    if len(matrix) > MODEL_SAMPLE_ROWS or matrix.shape[1] > 200:
+        raise DataProblem(
+            f"Candidate comparison is limited to {MODEL_SAMPLE_ROWS:,} rows by 200 model columns. "
+            "Larger customer tables are compared on a seeded random sample of that size."
+        )
     if not algorithms or not k_values:
         raise DataProblem("Choose at least one method and one candidate segment count.")
 
@@ -364,12 +372,20 @@ def centroid_distances(matrix: np.ndarray, labels: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame(np.round(distances, 3), index=unique, columns=unique)
 
 
+def _distances_to_centroids(rows: np.ndarray, centroids: np.ndarray) -> np.ndarray:
+    """Euclidean distance from every row to every center, one center at a time to keep memory at rows × centers."""
+    distances = np.empty((len(rows), len(centroids)), dtype=float)
+    for index, centroid in enumerate(centroids):
+        distances[:, index] = np.linalg.norm(rows - centroid, axis=1)
+    return distances
+
+
 def _membership_confidence(matrix: np.ndarray, labels: np.ndarray, model: object, algorithm: str) -> np.ndarray:
     if algorithm == "gmm" and hasattr(model, "predict_proba"):
         return np.asarray(model.predict_proba(matrix)).max(axis=1)
     unique = np.sort(np.unique(labels))
     centroids = np.vstack([matrix[labels == label].mean(axis=0) for label in unique])
-    distances = np.linalg.norm(matrix[:, None, :] - centroids[None, :, :], axis=2)
+    distances = _distances_to_centroids(matrix, centroids)
     centroid_positions = {label: index for index, label in enumerate(unique)}
     assigned_positions = np.array([centroid_positions[label] for label in labels])
     assigned_distance = distances[np.arange(len(matrix)), assigned_positions]
@@ -404,4 +420,60 @@ def fit_solution(matrix: np.ndarray, algorithm: str, k: int, seed: int = 42) -> 
         confidence=confidence,
         projection=projection,
         explained_variance=float(np.sum(pca.explained_variance_ratio_)),
+        model=model,
+    )
+
+
+def _assign_rows(
+    rows: np.ndarray, centroids: np.ndarray, centroid_labels: np.ndarray, model: object, algorithm: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Raw labels and membership confidence for prepared rows outside the fitted sample."""
+    if algorithm == "gmm" and hasattr(model, "predict_proba"):
+        probabilities = np.asarray(model.predict_proba(rows))
+        return probabilities.argmax(axis=1).astype(int), probabilities.max(axis=1)
+    distances = _distances_to_centroids(rows, centroids)
+    nearest = distances.argmin(axis=1)
+    assigned_distance = distances[np.arange(len(rows)), nearest]
+    distances[np.arange(len(rows)), nearest] = np.inf
+    alternative_distance = distances.min(axis=1)
+    confidence = np.clip(alternative_distance / (assigned_distance + alternative_distance + 1e-12), 0.0, 1.0)
+    return centroid_labels[nearest].astype(int), confidence
+
+
+def assign_all_customers(solution: SegmentSolution, prepared: PreparedData, frame: pd.DataFrame) -> SegmentSolution:
+    """Extend a solution fitted on the model sample to every customer in ``frame``.
+
+    Sampled customers keep their fitted labels. Every other customer is prepared with the same fitted
+    transformations, in chunks, and joins the most probable component (Gaussian mixture) or the nearest segment
+    center in prepared space (K-means, Ward, spectral), with the same confidence measure as the fitted customers.
+    """
+    positions = prepared.sample_positions
+    if positions is None:
+        return solution
+    if prepared.transform is None or len(frame) != prepared.total_rows:
+        raise DataProblem("The prepared data no longer matches this customer table. Run the comparison again.")
+    raw_sample = np.asarray(solution.raw_labels)
+    centroid_labels = np.sort(np.unique(raw_sample))
+    centroids = np.vstack([prepared.matrix[raw_sample == label].mean(axis=0) for label in centroid_labels])
+    raw_labels = np.empty(len(frame), dtype=int)
+    confidence = np.empty(len(frame), dtype=float)
+    for start, rows in prepared.transform.transform_in_chunks(frame):
+        labels, scores = _assign_rows(rows, centroids, centroid_labels, solution.model, solution.algorithm)
+        raw_labels[start : start + len(rows)] = labels
+        confidence[start : start + len(rows)] = scores
+    raw_labels[positions] = raw_sample
+    confidence[positions] = solution.confidence
+    display_map = {int(raw): str(display) for raw, display in zip(raw_sample, solution.segment_labels)}
+    lookup = np.array([display_map[int(label)] for label in centroid_labels], dtype=object)
+    segment_labels = lookup[np.searchsorted(centroid_labels, raw_labels)]
+    return SegmentSolution(
+        algorithm=solution.algorithm,
+        k=solution.k,
+        raw_labels=raw_labels,
+        segment_labels=segment_labels,
+        confidence=confidence,
+        projection=solution.projection,
+        explained_variance=solution.explained_variance,
+        model=solution.model,
+        fit_positions=positions,
     )

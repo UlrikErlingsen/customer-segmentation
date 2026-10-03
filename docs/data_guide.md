@@ -58,9 +58,9 @@ Rows missing customer ID, date, or amount are excluded from RFM aggregation. If 
 - CSV: one table; delimiters are detected.
 - Excel: every nonempty sheet is available in the sidebar.
 - JSON: either a list of row objects or an object whose values are named lists of rows.
-- Maximum local upload: 200 MB. JSON is limited to 50 MB.
+- Maximum local upload: 1,000 MB for every format (set with `SEGMENTSIGNAL_MAX_UPLOAD_MB`, or `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker).
 
-Excel content may expand to at most 400 MB. A raw table may contain at most 1 million rows, a workbook at most 10 million cells, and the final customer-level analysis at most 25,000 customers by 200 prepared model columns. These are engineering limits, not promises that every maximum-size file will be fast on every computer.
+Excel content may expand to at most 1,000 MB. A raw table (customer table or purchase log) may contain at most 10 million rows, a file at most 200 million cells, and the prepared analysis at most 200 model columns. Above 25,000 customers, candidate comparison, stability checks and the final fit use a seeded random sample of 25,000 customers, and every other customer is assigned to the nearest segment; preparation statistics, profiles and the customer-to-segment map always cover every customer. Above 100,000 customers the map is exported as CSV only. These are engineering limits, not promises that every maximum-size file will be fast on every computer; CSV is the fastest format for very large tables.
 
 Executable files, archives, Parquet, database connections, and serialized Python models are not accepted.
 
