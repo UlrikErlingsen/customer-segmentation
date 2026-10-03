@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .errors import DataProblem
-from .io import MAX_TABLE_ROWS
+from .limits import active, demo_limit
 
 
 PII_PATTERNS = {
@@ -175,11 +175,9 @@ def validate_customer_table(frame: pd.DataFrame, id_column: str, basis_columns: 
         )
     if len(frame) < 30:
         raise DataProblem("At least 30 customers are required. More customers usually produce more stable segments.")
-    if len(frame) > MAX_TABLE_ROWS:
-        raise DataProblem(
-            f"This release analyzes at most {MAX_TABLE_ROWS:,} customers at once. Use a representative sample or "
-            "aggregate first."
-        )
+    maximum_customers = active().customers
+    if maximum_customers is not None and len(frame) > maximum_customers:
+        raise DataProblem(demo_limit(f"The demo analyzes at most {maximum_customers:,} customers at once."))
     if not basis_columns:
         raise DataProblem("Choose at least one segmentation basis variable.")
     missing = [column for column in basis_columns if column not in frame]

@@ -26,6 +26,7 @@ from segmentsignal import __version__
 from segmentsignal.errors import DataProblem, friendly_message
 from segmentsignal.examples import demo_csv_bytes
 from segmentsignal.features import build_rfm, latest_date
+from segmentsignal.limits import DEMO_NOTE, active
 from segmentsignal.io import (
     LoadedData,
     dataset_fingerprint,
@@ -36,6 +37,7 @@ from segmentsignal.io import (
 )
 from segmentsignal.modeling import (
     ALGORITHM_LABELS,
+    HIERARCHICAL_ADVICE_ROWS,
     SPECTRAL_ROW_LIMIT,
     assign_all_customers,
     centroid_distances,
@@ -97,9 +99,11 @@ ANALYSIS_KEYS = (
     "comparison_settings", "comparison_seed", "chosen_diagnostics",
     "hierarchy_views", "hierarchy_views_key",
 )
-# Above this many customers the Excel and JSON packs carry a note instead of the customer-to-segment map, which is
-# then exported in full as CSV only (spreadsheet writers are slow at millions of rows, and Excel stops at 1,048,576).
-WORKBOOK_MAP_ROWS = 100_000
+# Excel holds at most 1,048,576 rows per sheet (one is the header). Above that the Excel pack carries a note and the
+# CSV and JSON downloads hold every customer.
+EXCEL_SHEET_ROWS = 1_048_575
+# Above this many customers the export files are built only when their button is clicked.
+LAZY_EXPORT_ROWS = 100_000
 DEFAULT_DEMO = ("demo_customers.csv", "customer")  # the most representative demo, preloaded on first run
 DATA_KEYS = ("tables", "source_name", "active_table", "upload_fingerprint", "upload_identity", "_uploader_had_file")
 
@@ -635,7 +639,22 @@ def compare_page() -> None:
         st.info("Save a data setup on page 1 first.")
         return
     frame = setup["frame"]
-    model_rows = min(len(frame), MODEL_SAMPLE_ROWS)
+    limits = active()
+    model_rows = len(frame)
+    if len(frame) > MODEL_SAMPLE_ROWS:
+        largest = len(frame) if limits.model_rows is None else min(len(frame), limits.model_rows)
+        model_rows = int(
+            st.number_input(
+                "Customers used to compare and fit models",
+                min_value=min(1_000, MODEL_SAMPLE_ROWS, largest),
+                max_value=largest,
+                value=min(MODEL_SAMPLE_ROWS, largest),
+                step=5_000,
+                help="Comparison refits every candidate many times, so a seeded random sample keeps it quick. Raise it "
+                "up to every customer if this computer has the time and memory; every customer is assigned either way.",
+                key=k(f"model_rows_{len(frame)}"),
+            )
+        )
     context = st.columns(4)
     context[0].metric("Customers", f"{len(frame):,}")
     context[1].metric("Basis variables", len(setup["basis"]))
@@ -661,13 +680,19 @@ def compare_page() -> None:
             "Gaussian mixtures are omitted because this setup contains categorical or binary basis variables. "
             "A full-covariance Gaussian likelihood is not appropriate for an exact one-hot or binary block."
         )
-    if len(frame) > MODEL_SAMPLE_ROWS:
+    if model_rows < len(frame):
         sig.note("info", "**Large table:** " + model_sample_note(len(frame), model_rows) + " The note is saved in every export.")
-    if model_rows > SPECTRAL_ROW_LIMIT:
+    if limits.spectral_rows is not None and model_rows > limits.spectral_rows:
         labels_to_keys.pop(ALGORITHM_LABELS["spectral"], None)
+        st.caption(f"Spectral clustering is hidden above {limits.spectral_rows:,} customers. {DEMO_NOTE}")
+    if limits.hierarchical_rows is not None and model_rows > limits.hierarchical_rows:
+        labels_to_keys.pop(ALGORITHM_LABELS["hierarchical"], None)
+        st.caption(f"Ward clustering is hidden above {limits.hierarchical_rows:,} customers. {DEMO_NOTE}")
+    if model_rows > SPECTRAL_ROW_LIMIT and ALGORITHM_LABELS["spectral"] in labels_to_keys:
         st.caption(
-            f"Spectral clustering is hidden above {SPECTRAL_ROW_LIMIT:,} customers because it compares every "
-            "customer with its neighbors in one large similarity graph."
+            f"Spectral clustering and Ward compare every pair of customers, so their memory and time grow with the "
+            f"square of the {model_rows:,} customers. They stay available, but expect a long run or a memory message "
+            "on very large samples; K-means and Gaussian mixtures scale far better."
         )
     default_methods = ["K-means"] + (
         ["Gaussian mixture"] if "Gaussian mixture" in labels_to_keys else []
@@ -720,6 +745,7 @@ def compare_page() -> None:
         "candidate_k_values": candidate_k_values,
         "stability_repeats": stability_repeats,
         "random_seed": int(seed),
+        "model_rows": model_rows,
     }
     current_signature = hashlib.sha256(
         json.dumps(comparison_settings, sort_keys=True).encode("utf-8")
@@ -728,7 +754,7 @@ def compare_page() -> None:
     if st.button("Run the comparison", type="primary", key=k("run_comparison")):
         try:
             with st.spinner("Preparing variables and testing candidate solutions…"):
-                prepared = prepare_features(frame, setup["config"], model_rows=MODEL_SAMPLE_ROWS, seed=int(seed))
+                prepared = prepare_features(frame, setup["config"], model_rows=model_rows, seed=int(seed))
                 comparison = compare_solutions(
                     prepared.matrix,
                     algorithms=tuple(labels_to_keys[label] for label in chosen_labels),
@@ -807,14 +833,21 @@ def compare_page() -> None:
     chart.update_layout(height=390, legend_title_text="", hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10))
     sig.chart(NS, chart, key=k("score_chart"))
 
-    if len(prepared.matrix) <= 5000:
+    hierarchy_cap = limits.hierarchical_rows
+    build_on_request = len(prepared.matrix) > HIERARCHICAL_ADVICE_ROWS
+    if hierarchy_cap is None or len(prepared.matrix) <= hierarchy_cap:
         with st.expander("How the customer base splits — hierarchy views"):
             st.caption(
                 "These views use Ward hierarchical clustering on the same prepared variables. "
                 "They help you sense-check a segment count; they do not prove one is correct."
             )
             views_key = st.session_state.get(k("comparison_signature"))
-            if st.session_state.get(k("hierarchy_views_key")) != views_key:
+            requested = not build_on_request or st.button(
+                f"Build hierarchy views for {len(prepared.matrix):,} customers",
+                help="Ward's merge tree compares every pair of customers; on a large sample this takes a while.",
+                key=k("build_hierarchy"),
+            )
+            if requested and st.session_state.get(k("hierarchy_views_key")) != views_key:
                 try:
                     with st.spinner("Building the customer hierarchy…"):
                         st.session_state[k("hierarchy_views")] = hierarchy_views(prepared.matrix, max_segments=8)
@@ -861,7 +894,8 @@ def compare_page() -> None:
                 sig.chart(NS, tree, key=k("dendrogram_chart"))
     else:
         st.caption(
-            "Hierarchy views (split boxes and dendrogram) are available when the comparison uses up to 5,000 customers."
+            f"Hierarchy views (split boxes and dendrogram) are available when the comparison uses up to "
+            f"{hierarchy_cap:,} customers. {DEMO_NOTE}"
         )
 
     options = [f"{row.method} · {int(row.segments)} segments" for row in diagnostics.itertuples()]
@@ -1215,21 +1249,21 @@ def profiles_page() -> None:
         (solution_key, tuple(sorted(names.items()))),
         lambda: build_segment_map(frame, setup["id_column"], solution.segment_labels, solution.confidence, names),
     )
-    map_in_workbook = len(segment_map) <= WORKBOOK_MAP_ROWS
+    map_in_workbook = len(segment_map) <= EXCEL_SHEET_ROWS
     if map_in_workbook:
         workbook_map = segment_map
     else:
         workbook_map = pd.DataFrame(
             {
                 "note": [
-                    f"The customer-to-segment map has {len(segment_map):,} rows, above the {WORKBOOK_MAP_ROWS:,}-row "
-                    "limit for the Excel and JSON packs. Download the customer segment CSV for every customer."
+                    f"The customer-to-segment map has {len(segment_map):,} rows, more than one Excel sheet can hold "
+                    f"({EXCEL_SHEET_ROWS:,}). The customer segment CSV and the JSON download contain every customer."
                 ]
             }
         )
         st.caption(
-            f"The map has {len(segment_map):,} customers, so the Excel and JSON packs carry a note in its place and the "
-            "**customer segment CSV** holds every customer."
+            f"The map has {len(segment_map):,} customers, more than an Excel sheet holds, so the Excel pack carries a "
+            "note in its place; the **customer segment CSV** and the **JSON** download contain every customer."
         )
     numeric_export = profile.numeric.copy()
     categorical_export = profile.categorical.copy()
@@ -1290,7 +1324,7 @@ def profiles_page() -> None:
     def build_json() -> bytes:
         return results_to_json(
             {
-                "customer_segment_map": workbook_map,
+                "customer_segment_map": segment_map,
                 "segment_summary": summary,
                 "numeric_profiles": numeric_export,
                 "categorical_profiles": categorical_export,
@@ -1307,7 +1341,7 @@ def profiles_page() -> None:
     # Small tables: build the files now (once per solution and names). Large tables: Streamlit calls each builder
     # only when its button is clicked, so reruns stay fast and no unused export sits in memory.
     export_key = (solution_key, tuple(sorted(names.items())))
-    if map_in_workbook:
+    if len(segment_map) <= LAZY_EXPORT_ROWS:
         excel_data = memo("excel_pack", export_key, build_excel)
         csv_data = build_csv()
         json_data = memo("json_pack", export_key, build_json)
@@ -1346,7 +1380,7 @@ def methods_page() -> None:
         ("K-means", "Fast and transparent for compact groups in scaled numeric space. It gives each customer one segment membership and can miss irregular or overlapping structures."),
         ("Gaussian mixture", "For numeric-only bases, allows overlapping elliptical groups and produces membership probabilities. It is omitted for categorical or binary bases and needs ample observations per dimension."),
         ("Ward hierarchy", "Builds a nested grouping by minimizing added within-group variance. It is useful for smaller datasets and cannot directly assign future customers."),
-        ("Spectral (flexible shapes)", f"Scores how similar every pair of customers is and groups customers who stay strongly connected, which can capture stretched or curved patterns the other methods split. It is limited to {SPECTRAL_ROW_LIMIT:,} customers and cannot directly assign future customers."),
+        ("Spectral (flexible shapes)", "Scores how similar every pair of customers is and groups customers who stay strongly connected, which can capture stretched or curved patterns the other methods split. Its memory grows with the square of the customers, so it is hidden from the defaults and best kept to a few thousand customers; it cannot directly assign future customers."),
     ]
     method_columns = st.columns(2)
     for index, (card_title, card_body) in enumerate(method_cards):
@@ -1377,8 +1411,9 @@ def methods_page() -> None:
         - Regression and classification predict outcomes or future membership; they are not segmentation methods and are outside this first release.
         - Segments can drift. Repeat the analysis on later data before keeping a strategy indefinitely.
         - Large tables: preparation statistics use every customer, while candidate comparison, stability checks and the
-          final fit use a seeded random sample of {MODEL_SAMPLE_ROWS:,} customers. Every other customer is assigned to the
-          nearest segment, and the exports record the sample.
+          final fit use a seeded random sample of {MODEL_SAMPLE_ROWS:,} customers by default (raise it up to every
+          customer on page 2). Every other customer is assigned to the nearest segment, and the exports record the
+          sample. Run locally, Segment Signal sets no limit on file size, rows or customers; memory is the limit.
         """
     )
     with st.expander("References and implementation notes"):

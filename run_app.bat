@@ -12,5 +12,5 @@ if not exist .venv\.segmentsignal-requirements-%REQ_HASH% (
   del /q .venv\.segmentsignal-requirements-* .venv\.segmentsignal-ready 2>nul
   type nul > .venv\.segmentsignal-requirements-%REQ_HASH%
 )
-if "%SEGMENTSIGNAL_MAX_UPLOAD_MB%"=="" set SEGMENTSIGNAL_MAX_UPLOAD_MB=1000
+if "%SEGMENTSIGNAL_MAX_UPLOAD_MB%"=="" set SEGMENTSIGNAL_MAX_UPLOAD_MB=10000
 python -m streamlit run app.py --server.headless=false --server.address=127.0.0.1 --server.maxUploadSize=%SEGMENTSIGNAL_MAX_UPLOAD_MB% --server.fileWatcherType=none --browser.gatherUsageStats=false

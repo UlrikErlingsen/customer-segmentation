@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from segmentsignal.errors import DataProblem
+from segmentsignal.limits import Limits
 from segmentsignal.io import load_data, results_to_excel, results_to_json, safe_for_spreadsheet
 from segmentsignal.validation import likely_pii_columns, suggest_basis_columns, usable_basis_columns, validate_customer_table
 
@@ -35,14 +36,16 @@ def test_csv_excel_json_round_trip(tmp_path: Path):
 def test_file_type_and_size_are_guarded(monkeypatch):
     with pytest.raises(DataProblem, match="file types"):
         load_data(b"hello", name="unsafe.pkl")
-    monkeypatch.setattr("segmentsignal.io.MAX_UPLOAD_BYTES", 8)
-    with pytest.raises(DataProblem, match="configured 1,000 MB"):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
+    monkeypatch.setattr("segmentsignal.limits.PUBLIC_DEMO", Limits(upload_bytes=8))
+    with pytest.raises(DataProblem, match="limit of the public demo"):
         load_data(b"x" * 9, name="large.csv")
 
 
 def test_csv_row_limit_is_enforced_while_reading_chunks(monkeypatch):
-    monkeypatch.setattr("segmentsignal.io.MAX_TABLE_ROWS", 2)
-    with pytest.raises(DataProblem, match="CSV exceeds"):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
+    monkeypatch.setattr("segmentsignal.limits.PUBLIC_DEMO", Limits(table_rows=2))
+    with pytest.raises(DataProblem, match="CSV has more than 2 rows"):
         load_data(b"customer_id,value\nA,1\nB,2\nC,3\n", name="too_many.csv")
 
 

@@ -67,9 +67,15 @@ All demos are fictional, including the preloaded one. **Behavior table** has one
 
 `examples/customer_template.xlsx` and `examples/customer_template.csv` show the customer-level shape.
 
-Segment Signal reads `.csv`, `.xlsx`, `.xls`, `.xlsm`, and `.json` up to 1,000 MB in the local app; JSON shares the same limit. Raw text, images, arbitrary model files, geospatial modeling, survey weighting, and time-series sequence clustering are outside this release.
+Segment Signal reads `.csv`, `.xlsx`, `.xls`, `.xlsm`, and `.json`. Raw text, images, arbitrary model files, geospatial modeling, survey weighting, and time-series sequence clustering are outside this release.
 
-Safety limits for this release are 1,000 MB per local upload, 1,000 MB uncompressed Excel content, 10 million rows per raw table (a customer table or a purchase log), 200 million loaded cells, and 200 prepared model columns. Customer tables of any size up to that row limit are prepared, profiled and exported in full. Above 25,000 customers, candidate comparison, stability checks and the final model fit use a seeded random sample of 25,000 customers; every other customer is then assigned to the nearest segment (or the most probable Gaussian-mixture component). The app shows this as a note and records it in every export. Above 100,000 customers the Excel and JSON packs carry a note instead of the customer-to-segment map, and the customer segment CSV holds every customer. These bounds keep local sessions responsive; they are not statistical recommendations.
+### Data limits
+
+**Run locally there is no built-in limit** on file size, rows, cells or customers: your computer's memory is the limit. Streamlit's upload cap defaults to 10,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB` in the launchers, `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker). If a file or step needs more memory than the computer has, the app says so plainly instead of crashing. The only fixed bound is 200 prepared model columns, which keeps distances between customers meaningful.
+
+Every customer is prepared, profiled and exported. Because the comparison refits every candidate many times, tables above 25,000 customers are compared and fitted on a seeded random sample of 25,000 customers by default; you can raise it up to every customer on page 2. Every other customer is then assigned to the nearest segment (or the most probable Gaussian-mixture component), and the app and every export record the sample. Ward and spectral clustering compare every pair of customers, so their memory grows with the square of the sample; they stay available but are not defaults on large samples. On screen, charts show at most 5,000 customers. The Excel pack holds the customer-to-segment map when it fits on one sheet (1,048,575 rows); the CSV and JSON downloads always hold every customer.
+
+**The public online demo** (`SIGNAL_PUBLIC=1`) keeps hard caps to protect a shared server: 200 MB per upload (50 MB for JSON), 400 MB of expanded Excel content, 1 million rows and 10 million cells per file, 25,000 analyzed customers, 5,000 customers for Ward and 2,500 for spectral clustering. Its messages say they are demo limits; the downloaded app has none. All caps live in `src/segmentsignal/limits.py`.
 
 On a 24-thread desktop with 32 GB of memory, a 5-million-customer CSV (305 MB) loaded in about 7 seconds and the whole workflow ran in about 1.5 minutes with a peak of about 2.1 GB of memory; a 10-million-row purchase log (335 MB) loaded in about 10 seconds and aggregated to 1.5 million customers in about 17 seconds, with a peak of about 3.1 GB. CSV is the fastest format for very large tables: JSON needs several times its size in memory, and Excel reads at roughly 150,000 cells per second (a 300,000-row, 12-column workbook took 23 seconds).
 
@@ -150,7 +156,7 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Segment Signal prefers local port 8501; the macOS launcher falls back to the next free port up to 8599. The macOS launcher accepts `SEGMENTSIGNAL_PORT` and `SEGMENTSIGNAL_NO_BROWSER=1`. Both launchers accept `SEGMENTSIGNAL_MAX_UPLOAD_MB` (default 1000), which sets Streamlit's upload limit and the app's own file-size check; `SEGMENTSIGNAL_DEBUG=1` reveals technical details for unexpected errors.
+Segment Signal prefers local port 8501; the macOS launcher falls back to the next free port up to 8599. The macOS launcher accepts `SEGMENTSIGNAL_PORT` and `SEGMENTSIGNAL_NO_BROWSER=1`. Both launchers accept `SEGMENTSIGNAL_MAX_UPLOAD_MB` (default 10000), Streamlit's upload cap in MB; `SEGMENTSIGNAL_DEBUG=1` reveals technical details for unexpected errors.
 
 ### Docker
 
@@ -159,7 +165,7 @@ docker build -t segmentsignal .
 docker run --rm -p 8501:8501 segmentsignal
 ```
 
-Then open http://127.0.0.1:8501. The container runs as a non-root user, keeps the application code read-only, and includes a health check. The image sets `STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1000` (MB); pass `-e STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200 -e SEGMENTSIGNAL_MAX_UPLOAD_MB=200` to `docker run` for a lower limit.
+Then open http://127.0.0.1:8501. The container runs as a non-root user, keeps the application code read-only, and includes a health check. The image sets `STREAMLIT_SERVER_MAX_UPLOAD_SIZE=10000` (MB); pass `-e STREAMLIT_SERVER_MAX_UPLOAD_SIZE=<MB>` to `docker run` for another cap, and `-e SIGNAL_PUBLIC=1` for the public-demo caps.
 
 ## Privacy
 

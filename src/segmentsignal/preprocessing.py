@@ -24,8 +24,9 @@ class PreprocessConfig:
     max_categories: int = 20
 
 
-# Above this many customers, comparison and model fitting use a seeded random sample of this size; every customer
-# is still prepared with the same fitted transformations and assigned to a segment afterwards.
+# Default number of customers used to compare and fit models. Larger tables use a seeded random sample of this
+# size (the user may raise it to every customer when running locally); every customer is still prepared with the
+# same fitted transformations and assigned to a segment afterwards.
 MODEL_SAMPLE_ROWS = 25_000
 TRANSFORM_CHUNK_ROWS = 250_000
 

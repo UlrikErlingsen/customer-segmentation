@@ -20,7 +20,8 @@ from sklearn.metrics import (
 from sklearn.mixture import GaussianMixture
 
 from .errors import DataProblem
-from .preprocessing import MODEL_SAMPLE_ROWS, PreparedData
+from .limits import active, demo_limit
+from .preprocessing import PreparedData
 
 
 ALGORITHM_LABELS = {
@@ -30,6 +31,9 @@ ALGORITHM_LABELS = {
     "spectral": "Spectral (flexible shapes)",
 }
 
+# Above these sizes the app recommends against the method (memory grows with the square of the customers) but, run
+# locally, does not refuse it; the public demo enforces them as caps (limits.py).
+HIERARCHICAL_ADVICE_ROWS = 5000
 SPECTRAL_ROW_LIMIT = 2500
 
 
@@ -93,15 +97,15 @@ def _fit_labels(matrix: np.ndarray, algorithm: str, k: int, seed: int) -> tuple[
         if not model.converged_:
             raise DataProblem("The Gaussian mixture did not converge for this candidate.")
     elif algorithm == "hierarchical":
-        if len(matrix) > 5000:
-            raise DataProblem("Hierarchical clustering is limited to 5,000 customers. Use K-means for larger files.")
+        cap = active().hierarchical_rows
+        if cap is not None and len(matrix) > cap:
+            raise DataProblem(demo_limit(f"Hierarchical clustering is limited to {cap:,} customers. Use K-means."))
         model = AgglomerativeClustering(n_clusters=k, linkage="ward")
         labels = model.fit_predict(matrix)
     elif algorithm == "spectral":
-        if len(matrix) > SPECTRAL_ROW_LIMIT:
-            raise DataProblem(
-                f"Spectral clustering is limited to {SPECTRAL_ROW_LIMIT:,} customers in this app. Use K-means for larger files."
-            )
+        cap = active().spectral_rows
+        if cap is not None and len(matrix) > cap:
+            raise DataProblem(demo_limit(f"Spectral clustering is limited to {cap:,} customers. Use K-means."))
         model = SpectralClustering(
             n_clusters=k,
             affinity="rbf",
@@ -192,11 +196,11 @@ def compare_solutions(
     matrix = np.asarray(matrix, dtype=float)
     if matrix.ndim != 2 or len(matrix) < 30:
         raise DataProblem("At least 30 prepared customer rows are required for comparison.")
-    if len(matrix) > MODEL_SAMPLE_ROWS or matrix.shape[1] > 200:
-        raise DataProblem(
-            f"Candidate comparison is limited to {MODEL_SAMPLE_ROWS:,} rows by 200 model columns. "
-            "Larger customer tables are compared on a seeded random sample of that size."
-        )
+    cap = active().model_rows
+    if cap is not None and len(matrix) > cap:
+        raise DataProblem(demo_limit(f"Candidate comparison uses at most {cap:,} customers."))
+    if matrix.shape[1] > 200:
+        raise DataProblem("The prepared analysis exceeds the supported 200 model columns.")
     if not algorithms or not k_values:
         raise DataProblem("Choose at least one method and one candidate segment count.")
 
@@ -325,8 +329,9 @@ def hierarchy_views(matrix: np.ndarray, max_segments: int = 8, dendrogram_leaves
     """
     matrix = np.asarray(matrix, dtype=float)
     n = len(matrix)
-    if n > 5000:
-        raise DataProblem("Hierarchy views are limited to 5,000 customers, like Ward clustering itself.")
+    cap = active().hierarchical_rows
+    if cap is not None and n > cap:
+        raise DataProblem(demo_limit(f"Hierarchy views are limited to {cap:,} customers, like Ward clustering itself."))
     if n < 4:
         raise DataProblem("At least 4 customers are required to draw a hierarchy.")
     max_segments = int(min(max_segments, n - 1))

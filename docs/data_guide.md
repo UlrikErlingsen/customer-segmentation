@@ -58,9 +58,11 @@ Rows missing customer ID, date, or amount are excluded from RFM aggregation. If 
 - CSV: one table; delimiters are detected.
 - Excel: every nonempty sheet is available in the sidebar.
 - JSON: either a list of row objects or an object whose values are named lists of rows.
-- Maximum local upload: 1,000 MB for every format (set with `SEGMENTSIGNAL_MAX_UPLOAD_MB`, or `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker).
+- No built-in size limit when run locally; Streamlit's upload cap defaults to 10,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB`, or `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker).
 
-Excel content may expand to at most 1,000 MB. A raw table (customer table or purchase log) may contain at most 10 million rows, a file at most 200 million cells, and the prepared analysis at most 200 model columns. Above 25,000 customers, candidate comparison, stability checks and the final fit use a seeded random sample of 25,000 customers, and every other customer is assigned to the nearest segment; preparation statistics, profiles and the customer-to-segment map always cover every customer. Above 100,000 customers the map is exported as CSV only. These are engineering limits, not promises that every maximum-size file will be fast on every computer; CSV is the fastest format for very large tables.
+Run locally, rows, cells and customers are limited only by the computer's memory; a file that does not fit produces a plain "not enough memory" message. The prepared analysis may have at most 200 model columns. Above 25,000 customers, candidate comparison, stability checks and the final fit use a seeded random sample (25,000 by default, adjustable up to every customer), and every other customer is assigned to the nearest segment; preparation statistics, profiles and the customer-to-segment map always cover every customer. The Excel pack carries the map when it fits on one sheet; CSV and JSON always carry every customer. CSV is the fastest format for very large tables.
+
+The public online demo (`SIGNAL_PUBLIC=1`) caps uploads at 200 MB (JSON 50 MB), expanded Excel content at 400 MB, files at 1 million rows and 10 million cells, and the analysis at 25,000 customers.
 
 Executable files, archives, Parquet, database connections, and serialized Python models are not accepted.
 

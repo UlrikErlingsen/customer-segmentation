@@ -8,7 +8,6 @@ import hashlib
 from io import BytesIO
 from itertools import chain
 import json
-import os
 from pathlib import Path
 import re
 from typing import BinaryIO
@@ -17,31 +16,15 @@ import zipfile
 import numpy as np
 import pandas as pd
 
-from .errors import DataProblem
+from .errors import DataProblem, out_of_memory_message
+from .limits import active, demo_limit
 
 
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".xlsm", ".json"}
-DEFAULT_MAX_UPLOAD_MB = 1000
-
-
-def _configured_upload_mb() -> int:
-    """The local upload cap in MB: SEGMENTSIGNAL_MAX_UPLOAD_MB when it is a positive whole number, else 1000."""
-    try:
-        return max(1, int(os.getenv("SEGMENTSIGNAL_MAX_UPLOAD_MB", str(DEFAULT_MAX_UPLOAD_MB))))
-    except ValueError:
-        return DEFAULT_MAX_UPLOAD_MB
-
-
-# One byte limit for every format, matching the launcher's --server.maxUploadSize (default 1000 MB).
-MAX_UPLOAD_MB = _configured_upload_mb()
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-# Zip-bomb and patience guard for .xlsx/.xlsm: the XML inside may expand to at most the upload cap. Excel parsing
-# reads roughly 150,000 cells per second, so larger workbooks belong in CSV, which loads about fifty times faster.
-MAX_UNCOMPRESSED_EXCEL_BYTES = MAX_UPLOAD_BYTES
-# Raw rows per table (a customer table or a purchase log) and loaded cells per file.
-MAX_TABLE_ROWS = 10_000_000
-MAX_TOTAL_CELLS = 200_000_000
+# Size, row and cell caps exist only in a public demo (SIGNAL_PUBLIC=1); see limits.py.
 CSV_CHUNK_ROWS = 250_000
+# Tables above this many rows are embedded in JSON exports without re-parsing (compact rather than indented).
+JSON_COMPACT_ROWS = 100_000
 CSV_DELIMITERS = ",;	|"
 ILLEGAL_XML_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
@@ -92,6 +75,13 @@ def _sniff_delimiter(raw: bytes) -> str:
         return ","
 
 
+def _check_table_size(limits, rows: int, cells: int, subject: str) -> None:
+    if limits.table_rows is not None and rows > limits.table_rows:
+        raise DataProblem(demo_limit(f"{subject} has more than {limits.table_rows:,} rows."))
+    if limits.total_cells is not None and cells > limits.total_cells:
+        raise DataProblem(demo_limit(f"{subject} has more than {limits.total_cells:,} cells."))
+
+
 def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) -> LoadedData:
     """Load CSV, Excel, or JSON without executing user content."""
     raw, detected_name = _source_bytes(source)
@@ -100,11 +90,13 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
     if extension not in SUPPORTED_EXTENSIONS:
         allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise DataProblem(f"Please use one of these file types: {allowed}.")
-    if len(raw) > MAX_UPLOAD_BYTES:
+    limits = active()
+    if limits.upload_bytes is not None and len(raw) > limits.upload_bytes:
         raise DataProblem(
-            f"This file is larger than the configured {MAX_UPLOAD_MB:,} MB limit. "
-            "Reduce it to the customer and feature columns you need."
+            demo_limit(f"Uploads are limited to {limits.upload_bytes // (1024 * 1024):,} MB in this demo.")
         )
+    if extension == ".json" and limits.json_bytes is not None and len(raw) > limits.json_bytes:
+        raise DataProblem(demo_limit(f"JSON uploads are limited to {limits.json_bytes // (1024 * 1024):,} MB."))
     if not raw:
         raise DataProblem("This file is empty.")
 
@@ -117,11 +109,7 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
             for chunk in reader:
                 row_count += len(chunk)
                 cell_count += int(chunk.shape[0] * chunk.shape[1])
-                if row_count > MAX_TABLE_ROWS or cell_count > MAX_TOTAL_CELLS:
-                    raise DataProblem(
-                        f"This CSV exceeds the safety limit of {MAX_TABLE_ROWS:,} rows or {MAX_TOTAL_CELLS:,} cells. "
-                        "Aggregate the purchase log or keep fewer columns before upload."
-                    )
+                _check_table_size(limits, row_count, cell_count, "This CSV")
                 chunks.append(chunk)
             if len(chunks) == 1:
                 frame = chunks[0]
@@ -130,13 +118,14 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
             del chunks
             tables = {"customers": frame}
         elif extension in {".xlsx", ".xls", ".xlsm"}:
-            if extension in {".xlsx", ".xlsm"}:
+            if extension in {".xlsx", ".xlsm"} and limits.expanded_workbook_bytes is not None:
                 with zipfile.ZipFile(BytesIO(raw)) as workbook:
                     uncompressed_size = sum(member.file_size for member in workbook.infolist())
-                if uncompressed_size > MAX_UNCOMPRESSED_EXCEL_BYTES:
+                if uncompressed_size > limits.expanded_workbook_bytes:
                     raise DataProblem(
-                        f"This workbook expands beyond {MAX_UNCOMPRESSED_EXCEL_BYTES // (1024 * 1024):,} MB. "
-                        "Keep only the sheets and columns needed for segmentation, or save the table as CSV."
+                        demo_limit(
+                            f"Workbooks may expand to at most {limits.expanded_workbook_bytes // (1024 * 1024):,} MB."
+                        )
                     )
             tables = pd.read_excel(BytesIO(raw), sheet_name=None)
         else:
@@ -155,6 +144,8 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
             del payload
     except DataProblem:
         raise
+    except MemoryError as exc:
+        raise DataProblem(out_of_memory_message("this file")) from exc
     except Exception as exc:
         raise DataProblem(
             "The file could not be read. Check that it opens normally and that the first row contains column names."
@@ -168,15 +159,8 @@ def load_data(source: str | Path | bytes | BinaryIO, name: str | None = None) ->
         # Rename in place rather than copying: a large table must not exist twice in memory.
         copy = frame
         copy.columns = _unique_column_names(list(copy.columns))
-        if len(copy) > MAX_TABLE_ROWS:
-            raise DataProblem(
-                f"The table ‘{table_name}’ has more than {MAX_TABLE_ROWS:,} rows. Aggregate or sample it before upload."
-            )
         total_cells += int(copy.shape[0] * copy.shape[1])
-        if total_cells > MAX_TOTAL_CELLS:
-            raise DataProblem(
-                f"The workbook contains more than {MAX_TOTAL_CELLS:,} cells. Keep only the tables and columns needed."
-            )
+        _check_table_size(limits, len(copy), total_cells, f"The table ‘{table_name}’")
         clean[str(table_name)] = copy
     if not clean:
         raise DataProblem("No usable tables were found in this file.")
@@ -243,9 +227,20 @@ def results_to_excel(tables: dict[str, pd.DataFrame]) -> bytes:
 
 def results_to_json(tables: dict[str, pd.DataFrame], metadata: dict | None = None) -> bytes:
     """Export records and reproducibility metadata as UTF-8 JSON."""
-    payload: dict[str, object] = {
-        name: json.loads(frame.to_json(orient="records", date_format="iso")) for name, frame in tables.items()
-    }
+    # Large tables are embedded as pandas' compact JSON text: re-parsing millions of records into Python objects
+    # would need several times the export's size in memory. Every row is still exported.
+    payload: dict[str, object] = {}
+    compact: dict[str, str] = {}
+    for name, frame in tables.items():
+        if len(frame) > JSON_COMPACT_ROWS:
+            marker = f"__segmentsignal_table_{len(compact)}__"
+            compact[f'"{marker}"'] = frame.to_json(orient="records", date_format="iso")
+            payload[name] = marker
+        else:
+            payload[name] = json.loads(frame.to_json(orient="records", date_format="iso"))
     if metadata:
         payload["analysis_metadata"] = metadata
-    return json.dumps(payload, indent=2, default=str, allow_nan=False).encode("utf-8")
+    text = json.dumps(payload, indent=2, default=str, allow_nan=False)
+    for marker, records in compact.items():
+        text = text.replace(marker, records, 1)
+    return text.encode("utf-8")

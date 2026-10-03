@@ -1,6 +1,6 @@
-"""Large-data limits: the old caps no longer block, the new caps explain themselves, and sampled models cover everyone.
+"""Data limits: none locally, demo caps only with SIGNAL_PUBLIC=1, and sampled models still cover every customer.
 
-Every test here is fast: large inputs are simulated by lowering a limit, never by building a huge file.
+Every test here is fast: inputs beyond the demo caps are built by lowering a cap, never by building a huge file.
 """
 
 from io import BytesIO
@@ -12,38 +12,95 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from segmentsignal import io as segment_io
-from segmentsignal.errors import DataProblem
+from segmentsignal import limits
+from segmentsignal.errors import DataProblem, friendly_message
 from segmentsignal.features import build_rfm, latest_date
-from segmentsignal.io import load_data
-from segmentsignal.modeling import assign_all_customers, compare_solutions, fit_solution
-from segmentsignal.preprocessing import MODEL_SAMPLE_ROWS, PreprocessConfig, prepare_features
+from segmentsignal.io import load_data, results_to_json
+from segmentsignal.limits import Limits
+from segmentsignal.modeling import assign_all_customers, compare_solutions, fit_solution, hierarchy_views
+from segmentsignal.preprocessing import PreprocessConfig, prepare_features
 from segmentsignal.validation import validate_customer_table
 
 
 ROOT = Path(__file__).parents[1]
 BASIS = ("recency_days", "purchase_frequency", "annual_spend", "engagement_score", "discount_share")
+# Tiny demo caps, so "beyond the demo caps" stays fast to build.
+TINY_DEMO = Limits(
+    upload_bytes=1024, json_bytes=32, expanded_workbook_bytes=1024, table_rows=3, total_cells=6,
+    customers=40, model_rows=40, hierarchical_rows=40, spectral_rows=40,
+)
 
 
 def _demo() -> pd.DataFrame:
     return load_data(ROOT / "examples" / "demo_customers.csv").tables["customers"]
 
 
-def test_default_limits_match_the_1000_mb_upload_cap():
-    assert segment_io.MAX_UPLOAD_MB == 1000
-    assert segment_io.MAX_UPLOAD_BYTES == 1000 * 1024 * 1024
-    assert segment_io.MAX_UNCOMPRESSED_EXCEL_BYTES >= segment_io.MAX_UPLOAD_BYTES
-    assert segment_io.MAX_TABLE_ROWS >= 5_000_000
-    assert not hasattr(segment_io, "MAX_JSON_BYTES"), "JSON shares the one upload limit"
+@pytest.fixture
+def tiny_demo_caps(monkeypatch):
+    monkeypatch.setattr(limits, "PUBLIC_DEMO", TINY_DEMO)
+    return monkeypatch
 
 
-def test_launcher_variable_sets_the_in_code_cap(monkeypatch):
-    monkeypatch.setenv("SEGMENTSIGNAL_MAX_UPLOAD_MB", "250")
-    assert segment_io._configured_upload_mb() == 250
-    monkeypatch.setenv("SEGMENTSIGNAL_MAX_UPLOAD_MB", "not-a-number")
-    assert segment_io._configured_upload_mb() == 1000
-    monkeypatch.setenv("SEGMENTSIGNAL_MAX_UPLOAD_MB", "0")
-    assert segment_io._configured_upload_mb() == 1
+def _inputs_beyond_tiny_caps():
+    csv = b"customer_id,spend\n" + b"".join(b"C%d,%d\n" % (index, index) for index in range(10))
+    json_payload = b'[{"customer_id": "A", "spend": 1}, {"customer_id": "B", "spend": 2}]'
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as workbook:
+        workbook.writestr("xl/worksheets/sheet1.xml", "x" * 4096)
+    customers = pd.DataFrame({"customer_id": np.arange(60), "spend": np.arange(60) % 13})
+    return csv, json_payload, output.getvalue(), customers
+
+
+def test_local_mode_has_no_built_in_limits(tiny_demo_caps):
+    tiny_demo_caps.delenv("SIGNAL_PUBLIC", raising=False)
+    assert limits.active() == Limits()
+    csv, json_payload, workbook, customers = _inputs_beyond_tiny_caps()
+    assert load_data(csv, name="many.csv").tables["customers"].shape == (10, 2)
+    assert load_data(json_payload, name="many.json").tables["customers"].shape == (2, 2)
+    with pytest.raises(DataProblem, match="could not be read"):  # past the size guard; just not a real workbook
+        load_data(workbook, name="large.xlsx")
+    validate_customer_table(customers, "customer_id", ["spend"])
+    matrix = np.random.default_rng(1).normal(size=(60, 2))
+    assert len(compare_solutions(matrix, algorithms=("kmeans",), k_values=(3,), stability_repeats=2).labels) == 1
+    assert hierarchy_views(matrix).max_segments == 8
+    assert len(fit_solution(matrix, "spectral", 3, seed=1).segment_labels) == 60
+
+
+def test_public_demo_enforces_its_caps_and_says_so(tiny_demo_caps):
+    tiny_demo_caps.setenv("SIGNAL_PUBLIC", "1")
+    csv, json_payload, workbook, customers = _inputs_beyond_tiny_caps()
+    cases = [
+        (lambda: load_data(b"x" * 1025, name="big.csv"), "Uploads are limited"),
+        (lambda: load_data(json_payload, name="many.json"), "JSON uploads are limited"),
+        (lambda: load_data(workbook, name="large.xlsx"), "expand to at most"),
+        (lambda: load_data(csv, name="many.csv"), "more than 3 rows"),
+        (lambda: validate_customer_table(customers, "customer_id", ["spend"]), "at most 40 customers"),
+        (lambda: compare_solutions(np.zeros((41, 2)), algorithms=("kmeans",), k_values=(3,)), "at most 40 customers"),
+        (lambda: fit_solution(np.zeros((41, 2)), "hierarchical", 3, 42), "limited to 40"),
+        (lambda: fit_solution(np.zeros((41, 2)), "spectral", 3, 42), "limited to 40"),
+        (lambda: hierarchy_views(np.zeros((41, 2))), "limited to 40"),
+    ]
+    for call, pattern in cases:
+        with pytest.raises(DataProblem, match=pattern) as caught:
+            call()
+        assert limits.DEMO_NOTE in str(caught.value)
+
+
+def test_real_demo_caps_follow_the_previous_release_limits():
+    assert limits.PUBLIC_DEMO.upload_bytes == 200 * 1024 * 1024
+    assert limits.PUBLIC_DEMO.table_rows == 1_000_000
+    assert limits.PUBLIC_DEMO.customers == 25_000
+
+
+def test_running_out_of_memory_is_a_plain_message(monkeypatch):
+    assert "not enough memory" in friendly_message(MemoryError())
+
+    def exhausted(*args, **kwargs):
+        raise MemoryError
+
+    monkeypatch.setattr("segmentsignal.io.pd.read_csv", exhausted)
+    with pytest.raises(DataProblem, match="not enough memory for this file"):
+        load_data(b"a,b\n1,2\n", name="huge.csv")
 
 
 def test_a_csv_above_the_old_one_million_row_cap_loads():
@@ -53,40 +110,15 @@ def test_a_csv_above_the_old_one_million_row_cap_loads():
     assert frame["spend"].dtype.kind == "i"
 
 
-def test_json_above_the_old_separate_cap_is_accepted(monkeypatch):
-    payload = b'[{"customer_id": "A", "spend": 1}, {"customer_id": "B", "spend": 2}]'
-    # The former 50 MB JSON-only limit is gone: JSON is bounded only by the shared upload cap.
-    monkeypatch.setattr(segment_io, "MAX_UPLOAD_BYTES", len(payload))
-    assert load_data(payload, name="customers.json").tables["customers"].shape == (2, 2)
-    monkeypatch.setattr(segment_io, "MAX_UPLOAD_BYTES", len(payload) - 1)
-    with pytest.raises(DataProblem, match="larger than the configured"):
-        load_data(payload, name="customers.json")
+def test_large_json_exports_keep_every_row(monkeypatch):
+    monkeypatch.setattr("segmentsignal.io.JSON_COMPACT_ROWS", 2)
+    frame = pd.DataFrame({"customer_id": ["A", "B", "C"], "segment": ["Segment 1"] * 3})
+    import json
 
-
-def test_cell_and_workbook_limits_explain_themselves(monkeypatch):
-    monkeypatch.setattr(segment_io, "MAX_TOTAL_CELLS", 5)
-    with pytest.raises(DataProblem, match="5 cells"):
-        load_data(b"a,b\n1,2\n3,4\n5,6\n", name="wide.csv")
-
-    output = BytesIO()
-    with zipfile.ZipFile(output, "w") as workbook:
-        workbook.writestr("xl/worksheets/sheet1.xml", "x" * 4096)
-    monkeypatch.setattr(segment_io, "MAX_UNCOMPRESSED_EXCEL_BYTES", 1024)
-    with pytest.raises(DataProblem, match="expands beyond"):
-        load_data(output.getvalue(), name="bomb.xlsx")
-
-
-def test_more_than_the_old_25000_customers_pass_validation(monkeypatch):
-    frame = pd.DataFrame({"customer_id": np.arange(30_000), "spend": np.arange(30_000) % 13})
-    validate_customer_table(frame, "customer_id", ["spend"])
-    monkeypatch.setattr("segmentsignal.validation.MAX_TABLE_ROWS", 29_999)
-    with pytest.raises(DataProblem, match="at most 29,999 customers"):
-        validate_customer_table(frame, "customer_id", ["spend"])
-
-
-def test_comparison_keeps_its_sample_sized_limit_with_a_clear_message():
-    with pytest.raises(DataProblem, match=f"limited to {MODEL_SAMPLE_ROWS:,} rows"):
-        compare_solutions(np.zeros((MODEL_SAMPLE_ROWS + 1, 2)), algorithms=("kmeans",), k_values=(3,))
+    payload = json.loads(results_to_json({"map": frame, "small": frame.head(1)}, {"seed": 1}))
+    assert payload["map"] == frame.to_dict(orient="records")
+    assert payload["small"] == frame.head(1).to_dict(orient="records")
+    assert payload["analysis_metadata"] == {"seed": 1}
 
 
 def test_large_tables_fit_on_a_sample_and_assign_every_customer():
@@ -137,7 +169,7 @@ SAMPLED_APP = """
 import segmentsignal.ui.app as segment_app
 
 segment_app.MODEL_SAMPLE_ROWS = 200
-segment_app.WORKBOOK_MAP_ROWS = 100
+segment_app.EXCEL_SHEET_ROWS = 100
 segment_app.render()
 """
 
@@ -156,7 +188,7 @@ def test_sampled_workflow_reaches_profiles_with_every_customer_assigned():
     assert app.sidebar.radio[0].value == "3 · Profiles & export"
     solution = app.session_state["segment:solution"]
     assert len(solution.segment_labels) == 600 and len(solution.fit_positions) == 200
-    assert any("Excel and JSON packs carry a note" in str(element.value) for element in app.caption)
+    assert any("more than an Excel sheet holds" in str(element.value) for element in app.caption)
 
 
 def test_streamed_dataset_fingerprint_matches_the_whole_table_formula():

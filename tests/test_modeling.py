@@ -81,7 +81,8 @@ def test_spectral_recovers_well_separated_groups():
     assert np.all((solution.confidence >= 0) & (solution.confidence <= 1))
 
 
-def test_spectral_row_limit_is_enforced():
+def test_spectral_row_limit_is_enforced_in_the_public_demo(monkeypatch):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
     with pytest.raises(DataProblem, match="2,500"):
         fit_solution(np.zeros((2600, 2)), "spectral", 3, 42)
 
@@ -111,7 +112,8 @@ def test_hierarchy_views_produce_consistent_nested_counts():
     assert len(views.dendrogram["leaf_labels"]) == 10
 
 
-def test_hierarchy_views_enforce_the_row_limit():
+def test_hierarchy_views_enforce_the_row_limit_in_the_public_demo(monkeypatch):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
     with pytest.raises(DataProblem, match="5,000"):
         hierarchy_views(np.zeros((5001, 2)))
 
