@@ -199,8 +199,9 @@ def compare_solutions(
     cap = active().model_rows
     if cap is not None and len(matrix) > cap:
         raise DataProblem(demo_limit(f"Candidate comparison uses at most {cap:,} customers."))
-    if matrix.shape[1] > 200:
-        raise DataProblem("The prepared analysis exceeds the supported 200 model columns.")
+    column_cap = active().model_columns
+    if column_cap is not None and matrix.shape[1] > column_cap:
+        raise DataProblem(demo_limit(f"The prepared analysis exceeds the demo's {column_cap} model columns."))
     if not algorithms or not k_values:
         raise DataProblem("Choose at least one method and one candidate segment count.")
 

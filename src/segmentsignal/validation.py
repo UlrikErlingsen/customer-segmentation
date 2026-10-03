@@ -183,8 +183,9 @@ def validate_customer_table(frame: pd.DataFrame, id_column: str, basis_columns: 
     missing = [column for column in basis_columns if column not in frame]
     if missing:
         raise DataProblem(f"These selected columns are missing: {', '.join(missing)}.")
-    if len(basis_columns) > 30:
-        raise DataProblem("Use at most 30 basis variables. Remove weak or repetitive measures before clustering.")
+    basis_cap = active().basis_variables
+    if basis_cap is not None and len(basis_columns) > basis_cap:
+        raise DataProblem(demo_limit(f"The demo uses at most {basis_cap} basis variables."))
     usable = [column for column in basis_columns if frame[column].nunique(dropna=True) > 1]
     if not usable:
         raise DataProblem("The selected basis variables do not vary between customers.")

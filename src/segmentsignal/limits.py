@@ -24,6 +24,8 @@ class Limits:
     model_rows: int | None = None
     hierarchical_rows: int | None = None
     spectral_rows: int | None = None
+    basis_variables: int | None = None
+    model_columns: int | None = None
 
 
 LOCAL = Limits()
@@ -37,6 +39,8 @@ PUBLIC_DEMO = Limits(
     model_rows=25_000,
     hierarchical_rows=5_000,
     spectral_rows=2_500,
+    basis_variables=30,
+    model_columns=200,
 )
 DEMO_NOTE = "This is a limit of the public demo; the downloaded app has none."
 

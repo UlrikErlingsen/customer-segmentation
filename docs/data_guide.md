@@ -15,7 +15,7 @@ You do not need recency, frequency, monetary value, or CLV columns. Needs survey
 | Descriptor | Variables used after clustering to explain, identify, or reach groups | Region, age band, channel, media use, acquisition source | Treating demographics as proof of needs |
 | Excluded | Fields irrelevant or unsafe for this decision | Notes, free text, exact address, internal timestamps | “Everything just in case” |
 
-The current release allows up to 30 basis variables. With only a small number of customers, use far fewer.
+There is no fixed maximum of basis variables (the public demo allows 30). With only a small number of customers, use far fewer.
 
 ### Numeric variables
 
@@ -60,7 +60,7 @@ Rows missing customer ID, date, or amount are excluded from RFM aggregation. If 
 - JSON: either a list of row objects or an object whose values are named lists of rows.
 - No built-in size limit when run locally; Streamlit's upload cap defaults to 10,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB`, or `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker).
 
-Run locally, rows, cells and customers are limited only by the computer's memory; a file that does not fit produces a plain "not enough memory" message. The prepared analysis may have at most 200 model columns. Above 25,000 customers, candidate comparison, stability checks and the final fit use a seeded random sample (25,000 by default, adjustable up to every customer), and every other customer is assigned to the nearest segment; preparation statistics, profiles and the customer-to-segment map always cover every customer. The Excel pack carries the map when it fits on one sheet; CSV and JSON always carry every customer. CSV is the fastest format for very large tables.
+Run locally, rows, cells and customers are limited only by the computer's memory; a file that does not fit produces a plain "not enough memory" message. Above 200 prepared model columns the app warns that distances between customers lose meaning. Above 25,000 customers, candidate comparison, stability checks and the final fit use a seeded random sample (25,000 by default, adjustable up to every customer), and every other customer is assigned to the nearest segment; preparation statistics, profiles and the customer-to-segment map always cover every customer. The Excel pack carries the map when it fits on one sheet; CSV and JSON always carry every customer. CSV is the fastest format for very large tables.
 
 The public online demo (`SIGNAL_PUBLIC=1`) caps uploads at 200 MB (JSON 50 MB), expanded Excel content at 400 MB, files at 1 million rows and 10 million cells, and the analysis at 25,000 customers.
 

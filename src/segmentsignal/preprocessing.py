@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from .errors import DataProblem
+from .limits import active, demo_limit
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class PreprocessConfig:
 # size (the user may raise it to every customer when running locally); every customer is still prepared with the
 # same fitted transformations and assigned to a segment afterwards.
 MODEL_SAMPLE_ROWS = 25_000
+# Above this many prepared columns the app warns that distances lose meaning (the public demo refuses).
+ADVISED_MODEL_COLUMNS = 200
 TRANSFORM_CHUNK_ROWS = 250_000
 
 
@@ -312,9 +315,18 @@ def prepare_features(
     matrix = np.column_stack(parts).astype(float)
     if matrix.shape[1] < 1 or not np.isfinite(matrix).all():
         raise DataProblem("The prepared feature matrix contains unusable values.")
-    if matrix.shape[1] > 200:
+    column_cap = active().model_columns
+    if column_cap is not None and matrix.shape[1] > column_cap:
         raise DataProblem(
-            "Preparation created more than 200 model columns. Remove high-cardinality or repetitive basis variables."
+            demo_limit(
+                f"Preparation created more than {column_cap} model columns. Remove high-cardinality or repetitive "
+                "basis variables."
+            )
+        )
+    if matrix.shape[1] > ADVISED_MODEL_COLUMNS:
+        warnings.append(
+            f"Preparation created {matrix.shape[1]} model columns. Distances between customers become less "
+            "informative with this many dimensions; consider fewer or grouped basis variables."
         )
     if matrix.shape[1] > max(50, total_rows // 3):
         warnings.append("There are many model columns relative to customers; simplify the basis variables if results are weak.")

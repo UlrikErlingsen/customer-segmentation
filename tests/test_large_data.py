@@ -27,7 +27,7 @@ BASIS = ("recency_days", "purchase_frequency", "annual_spend", "engagement_score
 # Tiny demo caps, so "beyond the demo caps" stays fast to build.
 TINY_DEMO = Limits(
     upload_bytes=1024, json_bytes=32, expanded_workbook_bytes=1024, table_rows=3, total_cells=6,
-    customers=40, model_rows=40, hierarchical_rows=40, spectral_rows=40,
+    customers=40, model_rows=40, hierarchical_rows=40, spectral_rows=40, basis_variables=1, model_columns=1,
 )
 
 
@@ -47,7 +47,7 @@ def _inputs_beyond_tiny_caps():
     output = BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as workbook:
         workbook.writestr("xl/worksheets/sheet1.xml", "x" * 4096)
-    customers = pd.DataFrame({"customer_id": np.arange(60), "spend": np.arange(60) % 13})
+    customers = pd.DataFrame({"customer_id": np.arange(60), "spend": np.arange(60) % 13, "extra": np.arange(60) % 7})
     return csv, json_payload, output.getvalue(), customers
 
 
@@ -79,6 +79,9 @@ def test_public_demo_enforces_its_caps_and_says_so(tiny_demo_caps):
         (lambda: fit_solution(np.zeros((41, 2)), "hierarchical", 3, 42), "limited to 40"),
         (lambda: fit_solution(np.zeros((41, 2)), "spectral", 3, 42), "limited to 40"),
         (lambda: hierarchy_views(np.zeros((41, 2))), "limited to 40"),
+        (lambda: validate_customer_table(customers.head(35), "customer_id", ["spend", "extra"]), "at most 1 basis"),
+        (lambda: prepare_features(customers.head(35), PreprocessConfig(("spend", "extra"))), "more than 1 model columns"),
+        (lambda: compare_solutions(np.zeros((35, 2)), algorithms=("kmeans",), k_values=(3,)), "1 model columns"),
     ]
     for call, pattern in cases:
         with pytest.raises(DataProblem, match=pattern) as caught:

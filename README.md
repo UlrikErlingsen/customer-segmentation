@@ -57,7 +57,7 @@ All demos are fictional, including the preloaded one. **Behavior table** has one
 
 ## Data contract
 
-**Customer-level data:** one row per customer, one unique, nonblank ID, and any relevant structured variables. Up to 30 basis variables are allowed, and at least 30 customers are required.
+**Customer-level data:** one row per customer, one unique, nonblank ID, and any relevant structured variables. Any number of basis variables is allowed (the public demo takes up to 30), and at least 30 customers are required.
 
 **Transaction data:** repeated rows with customer ID, purchase date, amount, and optional order ID. The app creates recency, frequency, monetary value, average order value, and tenure before clustering.
 
@@ -71,11 +71,11 @@ Segment Signal reads `.csv`, `.xlsx`, `.xls`, `.xlsm`, and `.json`. Raw text, im
 
 ### Data limits
 
-**Run locally there is no built-in limit** on file size, rows, cells or customers: your computer's memory is the limit. Streamlit's upload cap defaults to 10,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB` in the launchers, `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker). If a file or step needs more memory than the computer has, the app says so plainly instead of crashing. The only fixed bound is 200 prepared model columns, which keeps distances between customers meaningful.
+**Run locally there is no built-in limit** on file size, rows, cells or customers: your computer's memory is the limit. Streamlit's upload cap defaults to 10,000 MB (`SEGMENTSIGNAL_MAX_UPLOAD_MB` in the launchers, `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` in Docker). If a file or step needs more memory than the computer has, the app says so plainly instead of crashing. Above 200 prepared model columns the app warns that distances between customers become less informative.
 
 Every customer is prepared, profiled and exported. Because the comparison refits every candidate many times, tables above 25,000 customers are compared and fitted on a seeded random sample of 25,000 customers by default; you can raise it up to every customer on page 2. Every other customer is then assigned to the nearest segment (or the most probable Gaussian-mixture component), and the app and every export record the sample. Ward and spectral clustering compare every pair of customers, so their memory grows with the square of the sample; they stay available but are not defaults on large samples. On screen, charts show at most 5,000 customers. The Excel pack holds the customer-to-segment map when it fits on one sheet (1,048,575 rows); the CSV and JSON downloads always hold every customer.
 
-**The public online demo** (`SIGNAL_PUBLIC=1`) keeps hard caps to protect a shared server: 200 MB per upload (50 MB for JSON), 400 MB of expanded Excel content, 1 million rows and 10 million cells per file, 25,000 analyzed customers, 5,000 customers for Ward and 2,500 for spectral clustering. Its messages say they are demo limits; the downloaded app has none. All caps live in `src/segmentsignal/limits.py`.
+**The public online demo** (`SIGNAL_PUBLIC=1`) keeps hard caps to protect a shared server: 200 MB per upload (50 MB for JSON), 400 MB of expanded Excel content, 1 million rows and 10 million cells per file, 25,000 analyzed customers, 30 basis variables, 200 model columns, 5,000 customers for Ward and 2,500 for spectral clustering. Its messages say they are demo limits; the downloaded app has none. All caps live in `src/segmentsignal/limits.py`.
 
 On a 24-thread desktop with 32 GB of memory, a 5-million-customer CSV (305 MB) loaded in about 7 seconds and the whole workflow ran in about 1.5 minutes with a peak of about 2.1 GB of memory; a 10-million-row purchase log (335 MB) loaded in about 10 seconds and aggregated to 1.5 million customers in about 17 seconds, with a peak of about 3.1 GB. CSV is the fastest format for very large tables: JSON needs several times its size in memory, and Excel reads at roughly 150,000 cells per second (a 300,000-row, 12-column workbook took 23 seconds).
 
